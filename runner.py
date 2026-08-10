@@ -25,14 +25,14 @@ USE_FAKE_SOLVER: bool = False
 
 ALPHA_DEFAULT: str = "L"
 T_MAX: float = 2.0
-N_T: int = 4001
+N_T: int = 2001
 
-N_W_SCBA: int = 4001
-OMEGA_INT_N_X: int | None = 4001
-OMEGA_INT_N_OMEGA: int | None = 4001
+N_W_SCBA: int = 1001
+OMEGA_INT_N_X: int | None = 1001
+OMEGA_INT_N_OMEGA: int | None = 1001
 
-W_GRID = np.array([0.01, 0.1, 1.0, 10.0, 100.0], dtype=float)
-GQ_GRID = np.array([0.0, 0.001, 0.01, 0.1, 1.0], dtype=float)
+W_GRID = np.array([1, 2.5, 5, 10.0, 20.0, 100.0], dtype=float)
+GQ_GRID = np.array([0.0], dtype=float)
 
 PARALLEL: bool = True
 MAX_WORKERS: int | None = 25
@@ -40,6 +40,7 @@ MAX_WORKERS: int | None = 25
 USE_TEX: bool = False
 SAVE_SVG: bool = True
 SHOW_PLOTS: bool = False
+SAVE_NPY: bool = True
 
 RUN_BASE = Path(".")
 
@@ -110,10 +111,42 @@ def write_run_metadata(run_dir: Path) -> None:
         "USE_TEX": USE_TEX,
         "SAVE_SVG": SAVE_SVG,
         "SHOW_PLOTS": SHOW_PLOTS,
+        "SAVE_NPY": SAVE_NPY,
     }
 
     with open(run_dir / "run_info.json", "w", encoding="utf-8") as fh:
         json.dump(metadata, fh, indent=2)
+
+
+def save_currents_npy(
+    run_dir: Path,
+    t_ps: np.ndarray,
+    J_grid_uA: np.ndarray,
+    W_grid: np.ndarray,
+    gq_grid: np.ndarray,
+    alpha: str,
+) -> None:
+    data_dir = run_dir / "data"
+    data_dir.mkdir(exist_ok=True)
+
+    # Save the shared time axis once
+    np.save(data_dir / "t_ps.npy", t_ps)
+
+    total = len(W_grid) * len(gq_grid)
+    count = 0
+
+    for i, W in enumerate(W_grid):
+        for j, gq in enumerate(gq_grid):
+            fname = f"J_{alpha}_W{float(W):.3f}_gq{float(gq):.3f}.npy"
+            out_path = data_dir / fname
+            np.save(out_path, J_grid_uA[i, j, :])
+            count += 1
+            print(f"Saved NPY {count}/{total} → {out_path}", flush=True)
+
+    print()
+    print("#" * 82)
+    print(f"Saved t_ps.npy + {total} current NPY files to {data_dir}")
+    print("#" * 82)
 
 
 # =============================================================================
@@ -146,14 +179,14 @@ def make_sys(W: float, g_q: float) -> System:
         mu_ph=0.0,
         beta_fd=0.1,
         mu_fd=0.0,
-        e_min=-20.0,
-        e_max=20.0,
-        omega_min=-20.0,
-        omega_max=20.0,
+        e_min=-100.0,
+        e_max=100.0,
+        omega_min=-100.0,
+        omega_max=100.0,
         scba_max_iter=20_000,
         scba_tol_abs=1e-5,
         scba_tol_rel=1e-4,
-        scba_mixing=0.001,
+        scba_mixing=0.1,
         scba_min_iter=10,
         n_w_scba=N_W_SCBA,
         verbose=VERBOSE,
@@ -231,8 +264,16 @@ def compute_current(
             omega_int_n_omega=OMEGA_INT_N_OMEGA,
         )
 
+    current_unit_A = GAMMA * 1.602176634e-19 / (1.054571817e-34 / 1.602176634e-19)
     t_ps = time_to_ps(t_dimless, GAMMA)
     I_uA = current_to_uA(I_dimless, GAMMA)
+
+    if VERBOSE:
+        print(f"max|t_dimless| = {np.max(np.abs(t_dimless)):.6e}")
+        print(f"max|I_raw|     = {np.max(np.abs(I_dimless)):.6e}")
+        print(f"current unit   = {current_unit_A:.6e} A")
+        print(f"current unit   = {1e6 * current_unit_A:.6e} uA")
+        print(f"max|I_uA|      = {np.max(np.abs(I_uA)):.6e} uA")
 
     return t_ps, I_uA
 
@@ -521,16 +562,9 @@ def save_current_plot_svg(
 
     ax.plot(
         t_ps,
-        np.real(current_uA),
+        current_uA,
         linewidth=2.0,
-        label=rf"$\mathrm{{Re}}\,J_{{{alpha}}}(t)$",
-    )
-    ax.plot(
-        t_ps,
-        np.imag(current_uA),
-        linewidth=2.0,
-        linestyle="--",
-        label=rf"$\mathrm{{Im}}\,J_{{{alpha}}}(t)$",
+        label=rf"$J_{{{alpha}}}(t)$",
     )
 
     ax.set_xlabel(r"$t$ (ps)")
@@ -541,7 +575,6 @@ def save_current_plot_svg(
 
     fig.savefig(out_path, format="svg", bbox_inches="tight")
     plt.close(fig)
-
 
 def save_all_current_plots_svg(
     t_ps: np.ndarray,
@@ -554,32 +587,23 @@ def save_all_current_plots_svg(
     total = len(W_grid) * len(gq_grid)
     count = 0
 
-    print()
-    print("#" * 82)
-    print("Saving SVG figures")
-    print("#" * 82)
-    print(f"figure_dir = {fig_dir}")
-    print(f"total figures = {total}")
-
     for i, W in enumerate(W_grid):
-        for j, g_q in enumerate(gq_grid):
-            out_path = figure_path(fig_dir, alpha, float(W), float(g_q))
-
+        for j, gq in enumerate(gq_grid):
+            out_path = figure_path(fig_dir, alpha, float(W), float(gq))
             save_current_plot_svg(
                 t_ps=t_ps,
                 current_uA=J_grid_uA[i, j, :],
                 alpha=alpha,
                 W=float(W),
-                g_q=float(g_q),
+                g_q=float(gq),
                 out_path=out_path,
             )
-
             count += 1
-            print(f"Saved figure {count}/{total} | {out_path}", flush=True)
+            print(f"Saved figure {count}/{total} → {out_path}", flush=True)
 
     print()
     print("#" * 82)
-    print("Finished saving SVG figures")
+    print(f"Saved {total} SVG figures to {fig_dir}")
     print("#" * 82)
 
 
@@ -647,6 +671,7 @@ def main() -> None:
             print(f"USE_TEX = {USE_TEX}")
             print(f"SAVE_SVG = {SAVE_SVG}")
             print(f"SHOW_PLOTS = {SHOW_PLOTS}")
+            print(f"SAVE_NPY = {SAVE_NPY}")
             print(f"N_W_SCBA = {N_W_SCBA}")
             print(f"OMEGA_INT_N_X = {OMEGA_INT_N_X}")
             print(f"OMEGA_INT_N_OMEGA = {OMEGA_INT_N_OMEGA}")
@@ -662,6 +687,16 @@ def main() -> None:
                 max_workers=MAX_WORKERS,
                 log_dir=log_dir,
             )
+
+            if SAVE_NPY:
+                save_currents_npy(
+                    run_dir=run_dir,
+                    t_ps=t_ps,
+                    J_grid_uA=J_grid_uA,
+                    W_grid=W_GRID,
+                    gq_grid=GQ_GRID,
+                    alpha=alpha0,
+                )
 
             if SAVE_SVG:
                 save_all_current_plots_svg(
