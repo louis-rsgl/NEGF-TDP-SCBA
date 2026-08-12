@@ -83,6 +83,352 @@ time loop. Square jobs additionally validate the internal contour residues and
 the raw \(A/C\) continuity identities at turnoff. The Lorentzian finite
 difference is evaluated with the Dyson-consistent sign fixed by these identities.
 
+## Equations implemented
+
+This section summarizes the scalar Lorentzian-dot equations implemented in the
+backend, following the v26 frozen-SCBA derivation. The stationary reference is
+biased for a downward step and unbiased for upward and square pulses.
+
+### Frozen stationary SCBA
+
+For stationary reference shifts \(d_0\) on the dot and \(d_\alpha\) in lead
+\(\alpha\),
+
+\[
+\Sigma_{\alpha,\mathrm{lead}}^R(\omega)
+=\frac{\Gamma_\alpha^0W}{2(\omega-d_\alpha+iW)},
+\qquad
+\Sigma_{\mathrm{lead}}^<(\omega)
+=i\sum_\alpha f_\alpha(\omega-d_\alpha)
+\Gamma_\alpha^0\frac{W^2}{(\omega-d_\alpha)^2+W^2}.
+\]
+
+Here \((d_0,d_\alpha)=(\Delta,\Delta_\alpha)\) for downward and
+\((d_0,d_\alpha)=(0,0)\) for upward or square. The stationary equations are
+
+\[
+G^R=\left[
+\omega-\epsilon_0-d_0-\Sigma_{\mathrm{lead}}^R
+-\Sigma_{\mathrm{ep}}^R+i\eta
+\right]^{-1},
+\qquad
+G^<=G^R(\Sigma_{\mathrm{lead}}^<+\Sigma_{\mathrm{ep}}^<)G^A.
+\]
+
+For one phonon mode,
+
+\[
+G^>=G^<+G^R-G^A,
+\]
+
+\[
+\Sigma_{\mathrm{ep}}^<(\omega)
+=g^2\left[(N_0+1)G^<(\omega+\omega_0)
++N_0G^<(\omega-\omega_0)\right],
+\]
+
+\[
+\Sigma_{\mathrm{ep}}^>(\omega)
+=g^2\left[(N_0+1)G^>(\omega-\omega_0)
++N_0G^>(\omega+\omega_0)\right].
+\]
+
+The spectral and retarded constructions are
+
+\[
+\Gamma_{\mathrm{ep}}(\omega)
+=i[\Sigma_{\mathrm{ep}}^>(\omega)-\Sigma_{\mathrm{ep}}^<(\omega)],
+\]
+
+\[
+\Sigma_{\mathrm{ep,dyn}}^R(\omega)
+=\mathcal P\!\int\frac{d\omega'}{2\pi}
+\frac{\Gamma_{\mathrm{ep}}(\omega')}{\omega-\omega'}
+-\frac{i}{2}\Gamma_{\mathrm{ep}}(\omega).
+\]
+
+The code evaluates the principal value with a zero-padded, non-wrapping
+Hilbert transform. The stationary occupation and Hartree contribution are
+
+\[
+\bar n=-i\int\frac{d\omega}{2\pi}G^<(\omega),
+\qquad
+\Sigma_H=-\frac{2g^2\bar n}{\omega_0},
+\qquad
+\Sigma_{\mathrm{ep}}^R=\Sigma_H+\Sigma_{\mathrm{ep,dyn}}^R.
+\]
+
+`N0=None` selects the thermal Bose value; otherwise the supplied nonnegative
+`N0` is used. Shifted interpolation never wraps around the frequency grid:
+outside it, \(G^R(z)\to1/(z+i\eta)\) and \(G^<(z)\to0\).
+
+### Linear mixing and SCBA convergence
+
+In `scba_mode="self_consistent"`, each trial pair is recomputed from the
+current pair:
+
+\[
+G_{k,\mathrm{trial}}^R
+=\left[
+\omega-\epsilon_0-d_0-\Sigma_{\mathrm{lead}}^R
+-\Sigma_{\mathrm{ep}}^R[G_k]+i\eta
+\right]^{-1},
+\]
+
+\[
+G_{k,\mathrm{trial}}^<
+=G_{k,\mathrm{trial}}^R
+[\Sigma_{\mathrm{lead}}^<+\Sigma_{\mathrm{ep}}^<[G_k]]
+G_{k,\mathrm{trial}}^A.
+\]
+
+Both components are mixed together. With
+\(X_k=(G_k^R,G_k^<)^T\), plain linear mixing is
+
+\[
+\boxed{X_{k+1}=(1-\alpha)X_k+\alpha X_{k,\mathrm{trial}}},
+\qquad \alpha=\texttt{scba\_mixing}.
+\]
+
+Small \(\alpha\) is generally more stable but slower. After
+`scba_diis_start`, the solver may replace this candidate with a damped
+Pulay/DIIS combination of recent trial and residual vectors. If that system is
+singular or produces non-finite data, the code falls back to linear mixing.
+
+Using
+
+\[
+\|F\|_2=\left(\sum_i|F(\omega_i)|^2\Delta\omega\right)^{1/2},
+\]
+
+convergence requires absolute and relative residuals of both \(G^R\) and
+\(G^<\) to satisfy `scba_tol_abs` and `scba_tol_rel`. Non-convergence raises
+`SCBAConvergenceError` and prevents successful scientific output.
+
+The production runner currently uses `scba_mode="weak_born"`. This is a
+strict \(O(g^2)\) frozen-kernel calculation, not an iterative SCBA loop:
+\(\Sigma_{\mathrm{ep}}[G_0]\) is evaluated once from the no-phonon stationary
+reference, followed by one dressed Dyson/Keldysh update. Therefore
+`scba_mixing` and DIIS do not affect a `weak_born` run. Select
+`"self_consistent"` explicitly to use iterative mixing.
+
+### MiniPole and physical Green poles
+
+Only the causal dynamic retarded self-energy is fitted. The lesser Green
+function and lesser self-energy remain real-grid SCBA data. The auxiliary
+samples are
+
+\[
+\nu_n=\frac{(2n+1)\pi}{\beta_{\mathrm{fit}}},
+\qquad
+\Sigma_{\mathrm{ep,dyn}}^R(i\nu_n)
+=\int\frac{d\omega}{2\pi}
+\frac{\Gamma_{\mathrm{ep}}(\omega)}{i\nu_n-\omega}.
+\]
+
+MiniPole constructs
+
+\[
+\boxed{
+\Sigma_{\mathrm{ep,dyn}}^R(z)
+\simeq\sum_{j=1}^{M}\frac{s_j}{z-\zeta_j},
+\qquad \operatorname{Im}\zeta_j<0.
+}
+\]
+
+The same fitted \(\{\zeta_j,s_j\}\) is used in the unbiased and biased
+propagators:
+
+\[
+G_d^R(z)=\left[
+z-\epsilon_0-d_0-\Sigma_H
+-\sum_\alpha\frac{\Gamma_\alpha^0W}{2(z-d_\alpha+iW)}
+-\sum_j\frac{s_j}{z-\zeta_j}
+\right]^{-1}.
+\]
+
+The self-energy poles \(\zeta_j\) are not the physical Green poles. The Green
+poles \(\xi_r\) are the zeros of this Dyson denominator and are extracted from
+an equivalent non-Hermitian arrowhead eigenproblem. If
+\(a_m=\sum_{\alpha\in m}\Gamma_\alpha^0W/2\) groups leads with the same shift,
+the arrowhead matrix has first row
+
+\[
+(\epsilon_0+d_0+\Sigma_H,\ a_1,\ldots,a_L,\ s_1,\ldots,s_M)
+\]
+
+and auxiliary diagonal entries
+
+\[
+(d_1-iW,\ldots,d_L-iW,\zeta_1,\ldots,\zeta_M),
+\]
+
+with ones in the first column below the dot entry. Its eigenvalues are the
+candidate \(\xi_r\). Their analytic residues are
+
+\[
+\boxed{
+R_r=\left[
+1+\sum_m\frac{a_m}{(\xi_r-d_m+iW)^2}
++\sum_j\frac{s_j}{(\xi_r-\zeta_j)^2}
+\right]^{-1}.
+}
+\]
+
+Lorentzian embedding poles and MiniPole self-energy poles become zeros of the
+Dyson-reconstructed Green function; they are not inserted into Green-pole
+sums. Negligible pole--zero pairs are filtered by residue magnitude.
+Upper-half-plane or ill-conditioned nearly degenerate Green poles abort the
+job. At \(g=0\), the standard two-lead setup has two unbiased and three biased
+Maciejko Green poles.
+
+### Pulse transforms and current
+
+The stable history cardinal function is
+
+\[
+\operatorname{expc}(x|t)=\frac{e^{ixt}-1}{ix},
+\qquad \operatorname{expc}(0|t)=t.
+\]
+
+For the upward step, v26 gives the finite-pole structure
+
+\[
+A_\alpha^\uparrow(\epsilon,t)
+=G_{\mathrm{ss}}^{\uparrow,R}(\epsilon+\Delta_\alpha)
++\sum_\ell
+\frac{R_\ell^\uparrow
+e^{-i(\xi_\ell^\uparrow-\epsilon-\Delta_\alpha)t}}
+{\xi_\ell^\uparrow-\epsilon}
+\mathcal M_\alpha^\uparrow(\xi_\ell^\uparrow,\epsilon),
+\]
+
+and, with \(E=\omega+\epsilon'\),
+
+\[
+C^\uparrow(t,\omega,\epsilon')
+=G_{\mathrm{ss}}^{\uparrow,R}(E)
++\sum_\ell
+\frac{R_\ell^\uparrow e^{-i(\xi_\ell^\uparrow-E)t}}
+{\xi_\ell^\uparrow-E}
+\mathcal N^\uparrow(\xi_\ell^\uparrow,E).
+\]
+
+The voltage-difference kernels \(\mathcal M^\uparrow\) and
+\(\mathcal N^\uparrow\) contain no explicit phonon insertion: all retarded
+phonon dressing is already in the frozen propagators. The code evaluates them
+in its shifted-lead gauge and validates
+
+\[
+A_\alpha^\uparrow(\epsilon,0)=\widetilde G_{\mathrm{fr}}^R(\epsilon),
+\qquad
+C^\uparrow(0,\omega,\epsilon')
+=\widetilde G_{\mathrm{fr}}^R(\omega+\epsilon').
+\]
+
+The downward transform begins at the biased stationary boundary and uses the
+unbiased pole set for its decay:
+
+\[
+A_\alpha^\downarrow(\epsilon,0)
+=\overline G_{\mathrm{bias}}^R(\epsilon+\Delta_\alpha),
+\qquad
+A_\alpha^\downarrow(\epsilon,\infty)
+=\widetilde G_{\mathrm{fr}}^R(\epsilon).
+\]
+
+For a square pulse, causality first gives
+
+\[
+\{A,B,C,D,J\}_\square(t)=\{A,B,C,D,J\}_\uparrow(t),
+\qquad 0\le t\le s.
+\]
+
+For \(t>s\), the v26 retarded residue formulas are
+
+\[
+\boxed{
+A_\alpha^\square(\epsilon,t)
+=\widetilde G_{\mathrm{fr}}^R(\epsilon)
+-e^{i\Delta_\alpha s}
+\sum_rR_r^0e^{-i(\xi_r^0-\epsilon)t}
+\mathcal S_\alpha^\square(\xi_r^0,\epsilon;s),
+}
+\]
+
+\[
+\boxed{
+C^\square(t,\omega,\epsilon')
+=\widetilde G_{\mathrm{fr}}^R(E)
+-\sum_rR_r^0e^{-i(\xi_r^0-E)t}
+\mathcal S_C^\square(\xi_r^0,E;s).
+}
+\]
+
+The outer poles \(\xi_r^0,R_r^0\) are unbiased. The square amplitudes retain
+the biased-pole history through the internal lower-plane operator
+
+\[
+\boxed{
+\mathfrak R_-[F]
+=-\sum_{p\in\mathcal P_-(F)}\operatorname*{Res}_{z=p}F(z).
+}
+\]
+
+The full assembled integrand is tested before cancellations are accepted; its
+candidates include biased Green poles, Lorentzian lead poles, and kinematic
+poles. MiniPole self-energy poles are never inserted as independent Green
+poles.
+
+The post-turnoff lead history is
+
+\[
+\begin{aligned}
+B_\beta^>(\epsilon,\epsilon',t;s)
+={}&e^{i(\epsilon-\epsilon')s}
+\operatorname{expc}(\epsilon-\epsilon'|t-s)
+\widetilde G_{\mathrm{fr}}^R(\epsilon')\\
+&-e^{i\Delta_\beta s}\sum_rR_r^0
+e^{i(\epsilon-\xi_r^0)s}
+\operatorname{expc}(\epsilon-\xi_r^0|t-s)
+\mathcal S_\beta^\square(\xi_r^0,\epsilon';s),
+\end{aligned}
+\]
+
+with an analogous \(D_\alpha^>\) for the frozen phonon lesser history. The
+complete square lesser sector combines the unbiased advanced boundary, stored
+upward \(B^\uparrow(s),D^\uparrow(s)\), and the new post-turnoff histories. No
+SCBA or MiniPole update occurs at \(t=s\).
+
+For all protocols the scalar lead current is
+
+\[
+\boxed{
+J_\alpha(t)=-2e\int\frac{d\epsilon}{2\pi}
+\Gamma_\alpha(\epsilon)
+\operatorname{Im}[\Psi_\alpha(\epsilon,t)
++f_\alpha(\epsilon)A_\alpha(\epsilon,t)].
+}
+\]
+
+The code also returns occupation and the continuity diagnostic
+
+\[
+\mathcal R_{\mathrm{cont}}(t)
+=\sum_\alpha J_\alpha(t)-\frac{dn(t)}{dt}.
+\]
+
+Square turnoff validation enforces
+
+\[
+A_\alpha^\square(\epsilon,s^+)=A_\alpha^\uparrow(\epsilon,s^-),
+\qquad
+C^\square(s^+,\omega,\epsilon')=C^\uparrow(s^-,\omega,\epsilon').
+\]
+
+At \(s=0\) there is no transient; setting \(s=t\) recovers the upward
+solution; at long times the square pulse returns to the unbiased frozen state.
+
 ## Installation
 
 Python 3.13 is the primary development version. Install the pinned dependencies
@@ -310,9 +656,9 @@ The directory contains:
 The runner currently accumulates the current grid in memory and writes NPY/SVG
 outputs after the sweep finishes. If a serial run is interrupted, completed
 worker logs and quality JSON remain useful, but the `data/` directory may not
-exist yet. Such a directory is an incomplete diagnostic run and cannot be used
-by the subplot plotter. Start a new runner invocation after fixing the cause;
-do not combine files from runs with different `run_info.json` settings.
+exist yet. Such a directory is an incomplete diagnostic run. Start a new
+runner invocation after fixing the cause; do not combine files from runs with
+different `run_info.json` settings.
 
 ### Diagnose scientific validation failures
 
@@ -335,53 +681,6 @@ The continuity residual is a diagnostic rather than an automatic pass/fail
 gate. Its reported maximum can be dominated by a finite-difference derivative
 at a switching surface. Inspect its behavior away from \(t=0\) and, for a
 square pulse, away from \(t=s\), then repeat with finer time and energy grids.
-
-### Plot a completed run
-
-All plot commands require an explicit completed run directory. To create the
-large phonon panels in both unit systems:
-
-```bash
-python plot_phonon_subplots.py run_square_YYYYMMDD_HHMMSS
-```
-
-The same command works for either step protocol:
-
-```bash
-python plot_phonon_subplots.py run_upward_YYYYMMDD_HHMMSS
-python plot_phonon_subplots.py run_downward_YYYYMMDD_HHMMSS
-```
-
-It writes:
-
-```text
-figures/current_subplots_uA_ps.svg
-figures/current_subplots_original_units.svg
-```
-
-Each panel fixes one phonon coupling and overlays all bandwidths. Square plots
-mark \(t=s\), and the shared bandwidth legend is placed to the right of the
-panels. The plotter reads units, grids, protocol, and duration from
-`run_info.json`.
-
-For the phonon-free Maciejko bandwidth comparison:
-
-```bash
-python plot_maciejko.py run_square_YYYYMMDD_HHMMSS
-```
-
-For a coupling overlay at one bandwidth:
-
-```bash
-python plot_phonons.py run_square_YYYYMMDD_HHMMSS --W 20
-```
-
-To plot the newest completed run after verifying it is complete:
-
-```bash
-run_dir=$(ls -dt run_square_* | head -n 1)
-python plot_phonon_subplots.py "$run_dir"
-```
 
 ### Library interface
 
