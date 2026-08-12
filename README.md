@@ -57,7 +57,7 @@ For every parameter set the program performs these steps exactly once:
    dressed SCBA studies and uses Pulay/DIIS mixing of both components.
 2. Freeze $\Sigma_{\mathrm{ep}}^{R,<}$, separating the static Hartree term from
    the causal dynamic retarded self-energy. The immutable record also retains
-   the exact lesser Green function used to construct $\Sigma_{\mathrm{ep}}^<$;
+   the exact lesser Green function used to construct $\Sigma_{\mathrm{ep}}^{<}$;
    in strict weak-Born mode this is the no-phonon kernel input, not the
    subsequently dressed stationary lesser function.
 3. Evaluate the dynamic self-energy on an auxiliary upper-half-plane frequency
