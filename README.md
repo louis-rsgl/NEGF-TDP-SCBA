@@ -724,6 +724,8 @@ current_energy_batch       outer-energy integration batch size
 square_residue_n_theta     internal square contour points (default 64)
 square_residue_abs_tol     square contour absolute tolerance (default 1e-8)
 square_residue_rel_tol     square contour relative tolerance (default 1e-6)
+square_residue_cancellation_rel_tol
+                            relative removable-pole floor (default 1e-12)
 ```
 
 ## Validation

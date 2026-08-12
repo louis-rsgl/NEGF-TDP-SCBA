@@ -1299,11 +1299,15 @@ def current_all_square(
         "square_residue_n_theta": int(sys.square_residue_n_theta),
         "square_residue_abs_tolerance": sys.square_residue_abs_tol,
         "square_residue_rel_tolerance": sys.square_residue_rel_tol,
+        "square_residue_cancellation_rel_tolerance": (
+            sys.square_residue_cancellation_rel_tol
+        ),
         "square_residue_abs_error": square_cache.residue_max_abs_error,
         "square_residue_scaled_error": square_cache.residue_max_scaled_error,
         "square_residue_candidates": square_cache.residue_candidate_count,
         "square_residue_clusters": square_cache.residue_cluster_count,
         "square_residue_cancelled": square_cache.residue_cancelled_count,
+        "square_residue_negligible": square_cache.residue_negligible_count,
         "square_turnoff_A_abs_error": square_cache.turnoff_A_abs_error,
         "square_turnoff_A_scaled_error": square_cache.turnoff_A_scaled_error,
         "square_turnoff_C_abs_error": square_cache.turnoff_C_abs_error,

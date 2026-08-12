@@ -16,7 +16,12 @@ import numpy as np
 from scipy.integrate import quad_vec
 
 from backend.distribution import expc
-from backend.minimal_poles import Gbiased_R_mpm, Gfr_R_mpm, PoleCache
+from backend.minimal_poles import (
+    Gbiased_R_mpm,
+    Gfr_R_mpm,
+    PoleCache,
+    sigma_mpm,
+)
 from backend.system_classes import Lead, System
 
 
@@ -31,6 +36,7 @@ class SquareKernelCache:
     residue_candidate_count: int
     residue_cluster_count: int
     residue_cancelled_count: int
+    residue_negligible_count: int
     turnoff_A_abs_error: float
     turnoff_A_scaled_error: float
     turnoff_C_abs_error: float
@@ -44,6 +50,7 @@ class _ResidueStats:
     candidates: int = 0
     clusters: int = 0
     cancelled: int = 0
+    negligible: int = 0
 
 
 def _readonly(values) -> np.ndarray:
@@ -98,6 +105,19 @@ def _contour_residue(
     return complex(np.mean(values * radius * unit))
 
 
+def _contour_residue_and_scale(
+    function: Callable[[np.ndarray], np.ndarray],
+    center: complex,
+    radius: float,
+    n_theta: int,
+) -> tuple[complex, float]:
+    angles = 2.0 * np.pi * (np.arange(n_theta) + 0.5) / n_theta
+    unit = np.exp(1j * angles)
+    points = center + radius * unit
+    terms = np.asarray(function(points), dtype=np.complex128) * radius * unit
+    return complex(np.mean(terms)), float(np.max(np.abs(terms)))
+
+
 def lower_half_plane_residue(
     function: Callable[[np.ndarray], np.ndarray],
     candidates,
@@ -106,6 +126,8 @@ def lower_half_plane_residue(
     n_theta: int = 64,
     abs_tolerance: float = 1e-8,
     rel_tolerance: float = 1e-6,
+    cancellation_rel_tolerance: float = 1e-12,
+    contribution_weight: float = 1.0,
     stats: _ResidueStats | None = None,
 ) -> complex:
     """Return ``-sum Res F`` using the complete assembled integrand.
@@ -137,18 +159,40 @@ def lower_half_plane_residue(
             radius = min(radius, 0.2 * separation)
         if radius <= 1.05 * spread:
             raise RuntimeError("Square residue candidates could not be isolated.")
-        high = _contour_residue(function, center, radius, n_theta)
-        low = _contour_residue(function, center, radius, max(16, n_theta // 2))
-        shrunk = _contour_residue(function, center, 0.7 * radius, n_theta)
+        high, high_scale = _contour_residue_and_scale(
+            function, center, radius, n_theta
+        )
+        low, low_scale = _contour_residue_and_scale(
+            function, center, radius, max(16, n_theta // 2)
+        )
+        shrunk, shrunk_scale = _contour_residue_and_scale(
+            function, center, 0.7 * radius, n_theta
+        )
         error = max(abs(high - low), abs(high - shrunk))
-        scaled = error / (abs_tolerance + rel_tolerance * abs(high))
+        weighted_error = contribution_weight * error
+        weighted_value = contribution_weight * abs(high)
+        scaled = weighted_error / (
+            abs_tolerance + rel_tolerance * weighted_value
+        )
+        contour_scale = max(high_scale, low_scale, shrunk_scale)
+        weighted_magnitude = contribution_weight * max(
+            abs(high), abs(low), abs(shrunk), error
+        )
+        removable = weighted_magnitude <= (
+            cancellation_rel_tolerance * contribution_weight * contour_scale
+        )
+        negligible = not removable and weighted_magnitude <= abs_tolerance
         if stats is not None:
             stats.candidates += len(group)
             stats.clusters += 1
-            stats.max_abs_error = max(stats.max_abs_error, float(error))
+            stats.max_abs_error = max(stats.max_abs_error, float(weighted_error))
             stats.max_scaled_error = max(stats.max_scaled_error, float(scaled))
-            if abs(high) <= abs_tolerance:
+            if removable:
                 stats.cancelled += 1
+            elif negligible:
+                stats.negligible += 1
+        if removable or negligible:
+            continue
         if scaled > 1.0:
             raise RuntimeError(
                 "Square internal residue failed contour convergence: "
@@ -167,50 +211,122 @@ def chi_square(z, energy, delta: float, duration: float, sign: int, i0: float):
     )
 
 
+def _biased_green_times_lead_rational(
+    sys: System,
+    cache: PoleCache,
+    y,
+    constant,
+    coefficients: dict[float, complex | np.ndarray],
+):
+    """Evaluate ``Gbiased(y) * (constant + sum c_d/(y-d+iW))``.
+
+    Written this way the expression loses many digits close to a Lorentzian
+    embedding pole: the Dyson inverse diverges while the Green function tends
+    to zero.  Multiplying numerator and denominator by the product of distinct
+    lead denominators makes the v26 pole--zero cancellation explicit without
+    removing the candidate from the residue test.
+    """
+    y = np.asarray(y, dtype=np.complex128)
+    grouped_numerators: dict[float, float] = {}
+    for lead in sys.lead_names:
+        shift = float(sys.Delta(lead))
+        grouped_numerators[shift] = grouped_numerators.get(shift, 0.0) + (
+            0.5 * sys.Gamma0(lead) * sys.W
+        )
+    shifts = sorted(grouped_numerators)
+    denominators = [y - shift + 1j * sys.W for shift in shifts]
+    product = np.ones_like(y)
+    for denominator in denominators:
+        product *= denominator
+
+    numerator = np.asarray(constant, dtype=np.complex128) * product
+    dyson = (
+        y - sys.e_0 - sys.DELTA - cache.sigma_H
+        - sigma_mpm(y, cache.zeta, cache.weights)
+    ) * product
+    for index, shift in enumerate(shifts):
+        product_without = np.ones_like(y)
+        for other_index, denominator in enumerate(denominators):
+            if other_index != index:
+                product_without *= denominator
+        dyson -= grouped_numerators[shift] * product_without
+        if shift in coefficients:
+            numerator += np.asarray(
+                coefficients[shift], dtype=np.complex128
+            ) * product_without
+    return numerator / dyson
+
+
 def _Q_alpha(sys, cache, z, zp, energy, duration, alpha):
     da = sys.Delta(alpha)
     i0 = _i0_scale(sys)
-    finite_difference = 0.0j
+    coefficients: dict[float, complex | np.ndarray] = {}
+    gfr = Gfr_R_mpm(sys, cache, energy)
     for mu in sys.lead_names:
-        finite_difference += (
-            sys.Delta(mu) * sys.Gamma0(mu) * sys.W
-            / (2.0 * (energy + 1j * sys.W) * (zp + da - sys.Delta(mu) + 1j * sys.W))
+        shift = float(sys.Delta(mu))
+        coefficients[shift] = coefficients.get(shift, 0.0j) + (
+            sys.Delta(mu) * sys.Gamma0(mu) * sys.W * gfr
+            / (2.0 * (energy + 1j * sys.W))
         )
-    bracket = (
+    constant = (
         da / (zp - energy + 1j * i0)
-        + (sys.DELTA + finite_difference) * Gfr_R_mpm(sys, cache, energy)
+        + sys.DELTA * gfr
+    )
+    dressed_bracket = _biased_green_times_lead_rational(
+        sys, cache, zp + da, constant, coefficients
     )
     return (
         np.exp(1j * (z - zp - da) * duration)
-        * Gbiased_R_mpm(sys, cache, zp + da)
-        * bracket
+        * dressed_bracket
         / ((zp - energy + da + 1j * i0) * (z - zp - da - 1j * i0))
     )
 
 
 def _Q_C(sys, cache, z, zp, energy, duration):
     i0 = _i0_scale(sys)
-    finite_difference = 0.0j
+    coefficients: dict[float, complex | np.ndarray] = {}
+    gfr = Gfr_R_mpm(sys, cache, energy)
     for mu in sys.lead_names:
-        finite_difference += (
-            sys.Delta(mu) * sys.Gamma0(mu) * sys.W
-            / (2.0 * (energy + 1j * sys.W) * (zp - sys.Delta(mu) + 1j * sys.W))
+        shift = float(sys.Delta(mu))
+        coefficients[shift] = coefficients.get(shift, 0.0j) + (
+            sys.Delta(mu) * sys.Gamma0(mu) * sys.W * gfr
+            / (2.0 * (energy + 1j * sys.W))
         )
+    dressed_bracket = _biased_green_times_lead_rational(
+        sys, cache, zp, sys.DELTA * gfr, coefficients
+    )
     return (
         np.exp(1j * (z - zp) * duration)
-        * Gbiased_R_mpm(sys, cache, zp)
-        * (sys.DELTA + finite_difference)
-        * Gfr_R_mpm(sys, cache, energy)
+        * dressed_bracket
         / ((zp - energy + 1j * i0) * (z - zp - 1j * i0))
     )
 
 
-def _residue_kwargs(sys, stats):
+def _outer_contribution_weight(sys, cache, z, duration: float) -> float:
+    z = complex(z)
+    if len(cache.xi_unbiased) == 0:
+        return 1.0
+    index = int(np.argmin(np.abs(cache.xi_unbiased - z)))
+    distance = abs(cache.xi_unbiased[index] - z)
+    tolerance = sys.pole_merge_tol * max(1.0, abs(z))
+    if distance > tolerance:
+        # Direct real-axis diagnostics evaluate S(z) away from outer poles.
+        return 1.0
+    return float(
+        abs(cache.residues_unbiased[index]) * np.exp(z.imag * duration)
+    )
+
+
+def _residue_kwargs(sys, cache, z, duration, stats):
     return dict(
         merge_tolerance=sys.pole_merge_tol,
         n_theta=sys.square_residue_n_theta,
         abs_tolerance=sys.square_residue_abs_tol,
         rel_tolerance=sys.square_residue_rel_tol,
+        cancellation_rel_tolerance=sys.square_residue_cancellation_rel_tol,
+        contribution_weight=_outer_contribution_weight(
+            sys, cache, z, duration
+        ),
         stats=stats,
     )
 
@@ -225,6 +341,8 @@ def I_alpha_square(sys, cache, z, energy, duration, alpha, stats=None):
         coefficient = np.full_like(zp, complex(sys.DELTA))
         for beta in sys.lead_names:
             db = sys.Delta(beta)
+            if db == 0.0:
+                continue
             first += (
                 db
                 * chi_square(z, zp, db, duration, -1, i0)
@@ -253,7 +371,10 @@ def I_alpha_square(sys, cache, z, energy, duration, alpha, stats=None):
         ))
     candidates.extend(cache.xi_biased - da)
     candidates.extend((energy - da - 1j * i0, z - da - 1j * i0))
-    return lower_half_plane_residue(integrand, candidates, **_residue_kwargs(sys, stats))
+    return lower_half_plane_residue(
+        integrand, candidates,
+        **_residue_kwargs(sys, cache, z, duration, stats),
+    )
 
 
 def I_C_square(sys, cache, z, energy, duration, stats=None):
@@ -265,6 +386,8 @@ def I_C_square(sys, cache, z, energy, duration, stats=None):
         coefficient = np.full_like(zp, complex(sys.DELTA))
         for beta in sys.lead_names:
             db = sys.Delta(beta)
+            if db == 0.0:
+                continue
             first += (
                 db
                 * chi_square(z, zp, db, duration, -1, i0)
@@ -290,7 +413,10 @@ def I_C_square(sys, cache, z, energy, duration, stats=None):
             db - 1j * sys.W,
         ))
     candidates.extend(cache.xi_biased)
-    return lower_half_plane_residue(integrand, candidates, **_residue_kwargs(sys, stats))
+    return lower_half_plane_residue(
+        integrand, candidates,
+        **_residue_kwargs(sys, cache, z, duration, stats),
+    )
 
 
 def S_alpha_square(sys, cache, z, energy, duration, alpha, stats=None):
@@ -443,6 +569,7 @@ def build_square_kernel_cache(sys, energies, duration=None, cache=None):
         residue_candidate_count=stats.candidates,
         residue_cluster_count=stats.clusters,
         residue_cancelled_count=stats.cancelled,
+        residue_negligible_count=stats.negligible,
         turnoff_A_abs_error=max_a_abs,
         turnoff_A_scaled_error=max_a_scaled,
         turnoff_C_abs_error=max_c_abs,

@@ -78,6 +78,7 @@ class System:
     square_residue_n_theta: int = 64
     square_residue_abs_tol: float = 1e-8
     square_residue_rel_tol: float = 1e-6
+    square_residue_cancellation_rel_tol: float = 1e-12
 
     verbose: bool = True
 

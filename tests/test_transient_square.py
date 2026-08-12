@@ -13,6 +13,7 @@ from backend.observables import (
 from backend.square_pulse import (
     A_square,
     C_square,
+    _biased_green_times_lead_rational,
     build_square_kernel_cache,
     lower_half_plane_residue,
 )
@@ -62,6 +63,30 @@ def test_complete_integrand_residue_keeps_and_cancels_candidates():
         lambda z: (z - pole) / (z - pole), [pole], n_theta=64
     )
     assert abs(removable) < 1e-10
+
+
+def test_lead_pole_zero_is_evaluated_as_one_rational_product():
+    sys = make_square_system()
+    sys.solve_stationary()
+    cache = sys.prepare_poles()
+    # At the unshifted Lorentzian embedding pole Gbiased tends to zero.  The
+    # combined expression must remain exactly finite rather than evaluating a
+    # divergent Dyson term and a Green zero separately.
+    value = _biased_green_times_lead_rational(
+        sys, cache, -1j * sys.W, 1.0, {}
+    )
+    assert value == 0.0j
+
+
+def test_negligible_outer_pole_uses_propagated_residue_error():
+    pole = -1.0j
+    value = lower_half_plane_residue(
+        lambda z: 1e14 + 2.5 / (z - pole),
+        [pole],
+        n_theta=64,
+        contribution_weight=1e-20,
+    )
+    assert np.isfinite(value)
 
 
 def test_square_matches_upward_and_is_continuous_at_turnoff():
