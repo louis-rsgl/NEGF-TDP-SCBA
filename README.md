@@ -35,7 +35,7 @@ linewidth scale $\Gamma$. The runner is the physical-unit boundary:
 coupling is converted once using
 
 $$
-g/\Gamma=10^{-3}g_{\rm meV}/\Gamma_{\rm eV}.
+g/\Gamma=10^{-3}g_{\mathrm{meV}}/\Gamma_{\mathrm{eV}}.
 $$
 
 The requested meV value is retained in filenames, plots, logs, and metadata;
@@ -55,9 +55,9 @@ For every parameter set the program performs these steps exactly once:
    self-energy from the no-phonon stationary reference, then solve the fixed
    Dyson/Keldysh equations once. `self_consistent` mode remains available for
    dressed SCBA studies and uses Pulay/DIIS mixing of both components.
-2. Freeze $\Sigma_{\rm ep}^{R,<}$, separating the static Hartree term from
+2. Freeze $\Sigma_{\mathrm{ep}}^{R,<}$, separating the static Hartree term from
    the causal dynamic retarded self-energy. The immutable record also retains
-   the exact lesser Green function used to construct $\Sigma_{\rm ep}^<$;
+   the exact lesser Green function used to construct $\Sigma_{\mathrm{ep}}^<$;
    in strict weak-Born mode this is the no-phonon kernel input, not the
    subsequently dressed stationary lesser function.
 3. Evaluate the dynamic self-energy on an auxiliary upper-half-plane frequency
@@ -65,8 +65,8 @@ For every parameter set the program performs these steps exactly once:
    a causal AAA fallback discovers real-axis candidate poles, discards every
    upper-half-plane candidate, refits the lower-plane residues, and must pass
    the same self-energy, Green-function, pole, and causality gates.
-4. Reconstruct both the unbiased $G_{\rm fr}^R$ and biased
-   $G_{\rm ss}^R$ from the same fitted self-energy. A generalized arrowhead
+4. Reconstruct both the unbiased $G_{\mathrm{fr}}^R$ and biased
+   $G_{\mathrm{ss}}^R$ from the same fitted self-energy. A generalized arrowhead
    eigenproblem extracts both Green-pole sets; MiniPole self-energy poles are
    never inserted directly into a transient residue sum.
 5. Evaluate the selected protocol's $A$, $B$, $C$, and $D$ functions
@@ -78,7 +78,7 @@ For every parameter set the program performs these steps exactly once:
 SCBA, MPM, causality, pole-conditioning, reconstruction, and retarded-boundary
 failures abort the affected parameter job. Invalid scientific output
 is not saved as successful. The raw upward residue sums must reproduce
-$A_\alpha(0)=C(0)=G_{\rm fr}^R$ before the exact boundary is imposed in the
+$A_\alpha(0)=C(0)=G_{\mathrm{fr}}^R$ before the exact boundary is imposed in the
 time loop. Square jobs additionally validate the internal contour residues and
 the raw $A/C$ continuity identities at turnoff. The Lorentzian finite
 difference is evaluated with the Dyson-consistent sign fixed by these identities.
@@ -187,10 +187,11 @@ $X_k=(G_k^R,G_k^<)^T$, plain linear mixing is
 
 $$
 \boxed{X_{k+1}=(1-\alpha)X_k+\alpha X_{k,\mathrm{trial}}},
-\qquad \alpha=\texttt{scba\_mixing}.
+\qquad 0<\alpha\leq1.
 $$
 
-Small $\alpha$ is generally more stable but slower. After
+Here $\alpha$ is configured by `scba_mixing`. Small $\alpha$ is generally more
+stable but slower. After
 `scba_diis_start`, the solver may replace this candidate with a damped
 Pulay/DIIS combination of recent trial and residual vectors. If that system is
 singular or produces non-finite data, the code falls back to linear mixing.
@@ -232,7 +233,7 @@ $$
 \boxed{
 \Sigma_{\mathrm{ep,dyn}}^R(z)
 \simeq\sum_{j=1}^{M}\frac{s_j}{z-\zeta_j},
-\qquad \operatorname{Im}\zeta_j<0.
+\qquad \mathrm{Im}\,\zeta_j<0.
 }
 $$
 
@@ -287,8 +288,8 @@ Maciejko Green poles.
 The stable history cardinal function is
 
 $$
-\operatorname{expc}(x|t)=\frac{e^{ixt}-1}{ix},
-\qquad \operatorname{expc}(0|t)=t.
+\mathrm{expc}(x|t)=\frac{e^{ixt}-1}{ix},
+\qquad \mathrm{expc}(0|t)=t.
 $$
 
 For the upward step, v26 gives the finite-pole structure
@@ -371,7 +372,7 @@ the biased-pole history through the internal lower-plane operator
 $$
 \boxed{
 \mathfrak R_-[F]
-=-\sum_{p\in\mathcal P_-(F)}\operatorname*{Res}_{z=p}F(z).
+=-\sum_{p\in\mathcal P_-(F)}\mathrm{Res}_{z=p}F(z).
 }
 $$
 
@@ -386,11 +387,11 @@ $$
 \begin{aligned}
 B_\beta^>(\epsilon,\epsilon',t;s)
 ={}&e^{i(\epsilon-\epsilon')s}
-\operatorname{expc}(\epsilon-\epsilon'|t-s)
+\mathrm{expc}(\epsilon-\epsilon'|t-s)
 \widetilde G_{\mathrm{fr}}^R(\epsilon')\\
 &-e^{i\Delta_\beta s}\sum_rR_r^0
 e^{i(\epsilon-\xi_r^0)s}
-\operatorname{expc}(\epsilon-\xi_r^0|t-s)
+\mathrm{expc}(\epsilon-\xi_r^0|t-s)
 \mathcal S_\beta^\square(\xi_r^0,\epsilon';s),
 \end{aligned}
 $$
@@ -406,7 +407,7 @@ $$
 \boxed{
 J_\alpha(t)=-2e\int\frac{d\epsilon}{2\pi}
 \Gamma_\alpha(\epsilon)
-\operatorname{Im}[\Psi_\alpha(\epsilon,t)
+\mathrm{Im}[\Psi_\alpha(\epsilon,t)
 +f_\alpha(\epsilon)A_\alpha(\epsilon,t)].
 }
 $$
@@ -513,7 +514,7 @@ GQ_GRID = np.array([0.0, 0.01, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0])
 converted once when the runner constructs `System`:
 
 $$
-g/\Gamma=10^{-3}g_{\rm meV}/\Gamma_{\rm eV}.
+g/\Gamma=10^{-3}g_{\mathrm{meV}}/\Gamma_{\mathrm{eV}}.
 $$
 
 For example, with `GAMMA = 0.01` eV, `g_q = 20` meV means
@@ -743,7 +744,8 @@ residual are converged.
 
 ## References
 
-- J. Maciejko, J. Wang, and H. Guo, *Phys. Rev. B* **74**, 085324 (2006).
+- J. Maciejko, J. Wang, and H. Guo, *Phys. Rev. B* **74**, 085324 (2006), DOI
+  [10.1103/PhysRevB.74.085324](https://doi.org/10.1103/PhysRevB.74.085324).
 - L. Zhang, Y. Yu, and E. Gull, *Phys. Rev. B* **110**, 235131 (2024), DOI
   [10.1103/PhysRevB.110.235131](https://doi.org/10.1103/PhysRevB.110.235131).
 
