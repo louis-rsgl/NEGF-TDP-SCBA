@@ -1,0 +1,6 @@
+numpy>=1.21
+scipy>=1.7
+matplotlib
+tqdm
+kneed
+mini_pole @ git+https://github.com/Green-Phys/MiniPole.git@15e4a541d652d2584fd4680413d11b5571f78d9b

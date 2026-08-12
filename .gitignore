@@ -23,3 +23,15 @@ env/
 *.log
 run_*/
 logs/
+
+#other
+*.pdf
+*.tex
+plot_*.py
+v*.md
+NEGF*md
+
+#agents
+
+.agents
+.codex

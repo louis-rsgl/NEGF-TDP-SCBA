@@ -1,6 +1,6 @@
 import numpy as np
 
-def expc(z, t):
+def expc(z, t, tol=1e-10):
     """
     Computes expc(z, t) = (exp(i z t) - 1) / (i z), with the removable
     limit expc(0, t) = t.
@@ -13,9 +13,15 @@ def expc(z, t):
     z_b, t_b = np.broadcast_arrays(z, t)
     out = np.empty_like(z_b, dtype=np.complex128)
 
-    mask = z_b != 0
-    out[mask] = np.expm1(1j * z_b[mask] * t_b[mask]) / (1j * z_b[mask])
-    out[~mask] = t_b[~mask]
+    mask = np.abs(z_b * t_b) < tol
+    out[mask] = (
+        t_b[mask]
+        + 0.5j * z_b[mask] * t_b[mask] ** 2
+        - z_b[mask] ** 2 * t_b[mask] ** 3 / 6.0
+    )
+    out[~mask] = (
+        np.expm1(1j * z_b[~mask] * t_b[~mask]) / (1j * z_b[~mask])
+    )
 
     return out
 

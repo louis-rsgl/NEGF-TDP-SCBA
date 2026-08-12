@@ -10,9 +10,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from backend.observables import current_alpha
+from backend.minimal_poles import MINIPOLE_COMMIT
+from backend.observables import current_all, square_time_grid
 from backend.system_classes import LeadParams, System
-from backend.units import current_to_uA, time_to_ps
+from backend.units import current_to_uA, energy_mev_to_gamma, time_to_ps
 
 
 # =============================================================================
@@ -20,22 +21,33 @@ from backend.units import current_to_uA, time_to_ps
 # =============================================================================
 
 GAMMA: float = 0.01  # eV
-VERBOSE: bool = True
+VERBOSE: bool = False
 USE_FAKE_SOLVER: bool = False
 
 ALPHA_DEFAULT: str = "L"
-T_MAX: float = 2.0
-N_T: int = 2001
+T_MAX = 6.0
+N_T = 201
 
-N_W_SCBA: int = 1001
-OMEGA_INT_N_X: int | None = 1001
-OMEGA_INT_N_OMEGA: int | None = 1001
+N_W_SCBA = 2001
+OMEGA_INT_N_X = 1001
+OMEGA_INT_N_OMEGA = 1001
 
-W_GRID = np.array([1, 2.5, 5, 10.0, 20.0, 100.0], dtype=float)
-GQ_GRID = np.array([0.0], dtype=float)
+N0_DEFAULT: float | None = None
+MPM_TOL: float = 1e-8
+MPM_N_IW: int = 512
+MPM_BETA_FIT: float = 80.0
+STATIONARY_MODE = "weak_born"
+PULSE_PROTOCOL = "square"
+SQUARE_DURATION = 3.0  # hbar/Gamma
 
-PARALLEL: bool = True
-MAX_WORKERS: int | None = 25
+W_GRID = np.array([1.0, 2.5, 5.0, 10.0, 20.0, 100.0])
+# Physical electron-phonon couplings in meV.  They are converted exactly once
+# at the runner/backend boundary; System always stores dimensionless g/Gamma.
+GQ_GRID = np.array([0.0, 0.01, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0])
+
+PARALLEL = False
+MAX_WORKERS = 1
+CONTINUE_ON_FAILURE = True
 
 USE_TEX: bool = False
 SAVE_SVG: bool = True
@@ -71,9 +83,11 @@ class TimestampedWriter:
         self.stream.flush()
 
 
-def make_run_dir(base: Path = RUN_BASE) -> Path:
+def make_run_dir(base: Path = RUN_BASE, protocol: str = PULSE_PROTOCOL) -> Path:
+    if protocol not in ("downward", "upward", "square"):
+        raise ValueError(f"Unknown pulse protocol {protocol!r}.")
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = base / f"run_{run_id}"
+    run_dir = base / f"run_{protocol}_{run_id}"
     run_dir.mkdir(parents=True, exist_ok=False)
     (run_dir / "logs").mkdir(exist_ok=False)
     (run_dir / "figures").mkdir(exist_ok=False)
@@ -104,14 +118,29 @@ def write_run_metadata(run_dir: Path) -> None:
         "N_W_SCBA": N_W_SCBA,
         "OMEGA_INT_N_X": OMEGA_INT_N_X,
         "OMEGA_INT_N_OMEGA": OMEGA_INT_N_OMEGA,
+        "N0": N0_DEFAULT,
+        "MPM_TOL": MPM_TOL,
+        "MPM_N_IW": MPM_N_IW,
+        "MPM_BETA_FIT": MPM_BETA_FIT,
+        "STATIONARY_MODE": STATIONARY_MODE,
+        "PULSE_PROTOCOL": PULSE_PROTOCOL,
+        "SQUARE_DURATION": SQUARE_DURATION if PULSE_PROTOCOL == "square" else None,
+        "SQUARE_DURATION_UNITS": "hbar/Gamma",
+        "STATIONARY_REFERENCE": (
+            "biased" if PULSE_PROTOCOL == "downward" else "unbiased"
+        ),
         "W_GRID": W_GRID.tolist(),
         "GQ_GRID": GQ_GRID.tolist(),
+        "GQ_GRID_UNITS": "meV",
+        "GQ_GRID_GAMMA": energy_mev_to_gamma(GQ_GRID, GAMMA).tolist(),
         "PARALLEL": PARALLEL,
         "MAX_WORKERS": MAX_WORKERS,
+        "CONTINUE_ON_FAILURE": CONTINUE_ON_FAILURE,
         "USE_TEX": USE_TEX,
         "SAVE_SVG": SAVE_SVG,
         "SHOW_PLOTS": SHOW_PLOTS,
         "SAVE_NPY": SAVE_NPY,
+        "MINIPOLE_COMMIT": MINIPOLE_COMMIT,
     }
 
     with open(run_dir / "run_info.json", "w", encoding="utf-8") as fh:
@@ -134,9 +163,18 @@ def save_currents_npy(
 
     total = len(W_grid) * len(gq_grid)
     count = 0
+    failed = 0
 
     for i, W in enumerate(W_grid):
         for j, gq in enumerate(gq_grid):
+            if not np.all(np.isfinite(J_grid_uA[i, j, :])):
+                failed += 1
+                print(
+                    f"Skipped failed NPY {failed} → W={float(W):.3f}, "
+                    f"g_q={float(gq):.3f}",
+                    flush=True,
+                )
+                continue
             fname = f"J_{alpha}_W{float(W):.3f}_gq{float(gq):.3f}.npy"
             out_path = data_dir / fname
             np.save(out_path, J_grid_uA[i, j, :])
@@ -145,7 +183,8 @@ def save_currents_npy(
 
     print()
     print("#" * 82)
-    print(f"Saved t_ps.npy + {total} current NPY files to {data_dir}")
+    print(f"Saved t_ps.npy + {count} current NPY files to {data_dir}")
+    print(f"Skipped {failed} failed parameter sets")
     print("#" * 82)
 
 
@@ -154,41 +193,68 @@ def save_currents_npy(
 # =============================================================================
 
 def make_sys(W: float, g_q: float) -> System:
+    # Linear SCBA is noncontractive in the present model above g/Gamma ~ 1.5.
+    # Bound those diagnostic attempts so a failed strong-coupling point does
+    # not monopolize an entire sweep.  Successful weak/intermediate points keep
+    # the tighter production iteration budget.
+    g_q_gamma = float(energy_mev_to_gamma(g_q, GAMMA))
+    strong_coupling = abs(g_q_gamma) > 1.0
+    if W <= 1.0:
+        if PULSE_PROTOCOL in ("upward", "square") and g_q >= 20.0:
+            # The unbiased weak-Born reference develops a narrow high-coupling
+            # feature that is under-resolved at the downward grid density.
+            scba_points = 40001
+        else:
+            scba_points = 20001 if g_q >= 20.0 else 10001
+    elif W <= 2.5 and g_q >= 20.0:
+        scba_points = 8001
+    elif W <= 5.0 and g_q >= 20.0:
+        scba_points = 4001
+    else:
+        scba_points = N_W_SCBA
     return System(
+        pulse_protocol=PULSE_PROTOCOL,
+        pulse_duration=SQUARE_DURATION if PULSE_PROTOCOL == "square" else None,
         ETA=1e-3,
         DELTA=5.0,
         leads={
             "L": LeadParams(
                 Gamma0=0.5,
                 Delta=10.0,
-                beta=0.1,
+                beta=10,
                 mu=0.0,
             ),
             "R": LeadParams(
                 Gamma0=0.5,
                 Delta=0.0,
-                beta=0.1,
+                beta=10,
                 mu=0.0,
             ),
         },
         W=W,
-        g_q=g_q,
+        g_q=g_q_gamma,
         w_q=0.2,
         e_0=0.0,
         beta_ph=20.0,
         mu_ph=0.0,
-        beta_fd=0.1,
+        N0=N0_DEFAULT,
+        beta_fd=10,
         mu_fd=0.0,
-        e_min=-100.0,
-        e_max=100.0,
+        e_min=-20.0,
+        e_max=20.0,
         omega_min=-100.0,
         omega_max=100.0,
-        scba_max_iter=20_000,
+        scba_max_iter=5_000 if strong_coupling else 20_000,
+        scba_mode=STATIONARY_MODE,
         scba_tol_abs=1e-5,
         scba_tol_rel=1e-4,
-        scba_mixing=0.1,
+        scba_mixing=0.05,
         scba_min_iter=10,
-        n_w_scba=N_W_SCBA,
+        n_w_scba=scba_points,
+        mpm_tol=MPM_TOL,
+        mpm_n_iw=MPM_N_IW,
+        mpm_beta_fit=MPM_BETA_FIT,
+        mpm_green_rel_tol=7e-2,
         verbose=VERBOSE,
     )
 
@@ -203,7 +269,10 @@ def fake_current_alpha(
     t_max: float,
     n_t: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    t = np.linspace(0.0, t_max, n_t, dtype=float)
+    if sys.pulse_protocol == "square":
+        t = square_time_grid(t_max, n_t, float(sys.pulse_duration))
+    else:
+        t = np.linspace(0.0, t_max, n_t, dtype=float)
 
     W = sys.W
     gq = sys.g_q
@@ -214,7 +283,6 @@ def fake_current_alpha(
     current = decay * (
         np.sin(omega * t)
         + 0.35 * np.sin(2.0 * omega * t)
-        + 1j * 0.7 * np.cos(omega * t)
     )
 
     if alpha == "R":
@@ -227,14 +295,15 @@ def fake_current_alpha(
 # Current computation
 # =============================================================================
 
-def compute_current(
+def _compute_current_with_diagnostics(
     W: float,
     g_q: float,
     alpha: str = ALPHA_DEFAULT,
     t_max: float = T_MAX,
     n_t: int = N_T,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, dict]:
     sys = make_sys(W=W, g_q=g_q)
+    resolved_g_q_gamma = sys.g_q
 
     if USE_FAKE_SOLVER:
         if VERBOSE:
@@ -249,20 +318,29 @@ def compute_current(
             t_max=t_max,
             n_t=n_t,
         )
+        diagnostics = {"fake_solver": True, "N0": None}
     else:
         sys.launch()
 
         if VERBOSE:
             sys.reporter().print_unit_system(GAMMA)
 
-        t_dimless, I_dimless = current_alpha(
+        transient = current_all(
             sys=sys,
-            alpha=alpha,
             t_max=t_max,
             n_t=n_t,
             omega_int_n_x=OMEGA_INT_N_X,
             omega_int_n_omega=OMEGA_INT_N_OMEGA,
+            pulse_duration=(SQUARE_DURATION if PULSE_PROTOCOL == "square" else None),
         )
+        t_dimless = transient.t
+        I_dimless = transient.currents[alpha]
+        diagnostics = dict(transient.diagnostics)
+        diagnostics["fake_solver"] = False
+        if VERBOSE:
+            print("Transient quality diagnostics:")
+            for key, value in transient.diagnostics.items():
+                print(f"  {key} = {value}")
 
     current_unit_A = GAMMA * 1.602176634e-19 / (1.054571817e-34 / 1.602176634e-19)
     t_ps = time_to_ps(t_dimless, GAMMA)
@@ -275,7 +353,31 @@ def compute_current(
         print(f"current unit   = {1e6 * current_unit_A:.6e} uA")
         print(f"max|I_uA|      = {np.max(np.abs(I_uA)):.6e} uA")
 
-    return t_ps, I_uA
+    diagnostics["g_q_input_meV"] = float(g_q)
+    diagnostics["g_q_resolved_Gamma"] = float(resolved_g_q_gamma)
+    diagnostics["g_q_resolved_eV"] = float(g_q) * 1e-3
+    diagnostics["pulse_protocol"] = PULSE_PROTOCOL
+    diagnostics["pulse_duration"] = (
+        SQUARE_DURATION if PULSE_PROTOCOL == "square" else None
+    )
+    diagnostics["stationary_reference"] = (
+        "biased" if PULSE_PROTOCOL == "downward" else "unbiased"
+    )
+    return t_ps, I_uA, diagnostics
+
+
+def compute_current(
+    W: float,
+    g_q: float,
+    alpha: str = ALPHA_DEFAULT,
+    t_max: float = T_MAX,
+    n_t: int = N_T,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compatibility wrapper returning only the time grid and selected current."""
+    t_ps, current_uA, _ = _compute_current_with_diagnostics(
+        W=W, g_q=g_q, alpha=alpha, t_max=t_max, n_t=n_t
+    )
+    return t_ps, current_uA
 
 
 # =============================================================================
@@ -307,13 +409,21 @@ def _compute_current_job(
             print(f"job indices: i={i}, j={j}")
             print(f"W={W:.6f}")
             print(f"g_q={g_q:.6f}")
+            print(f"g_q units=meV; resolved g_q/Gamma={energy_mev_to_gamma(g_q, GAMMA):.6e}")
+            print(f"pulse_protocol={PULSE_PROTOCOL}")
+            if PULSE_PROTOCOL == "square":
+                print(f"pulse_duration={SQUARE_DURATION} hbar/Gamma")
+            print(
+                "stationary_reference="
+                f"{'biased' if PULSE_PROTOCOL == 'downward' else 'unbiased'}"
+            )
             print(f"alpha={alpha}")
             print(f"t_max={t_max}")
             print(f"n_t={n_t}")
             print("#" * 82)
 
             try:
-                t, current = compute_current(
+                t, current, diagnostics = _compute_current_with_diagnostics(
                     W=W,
                     g_q=g_q,
                     alpha=alpha,
@@ -322,13 +432,33 @@ def _compute_current_job(
                 )
                 print("Worker finished successfully")
                 print(f"max|J| = {np.max(np.abs(current)):.6e} µA")
+                print("Quality diagnostics:")
+                for key, value in diagnostics.items():
+                    print(f"  {key}={value}")
                 print(f"log_path = {log_path}")
             except Exception:
                 print("Worker failed with exception:")
                 import traceback
+                failure = {
+                    "status": "failed",
+                    "W": W,
+                    "g_q_input_meV": g_q,
+                    "g_q_resolved_Gamma": float(energy_mev_to_gamma(g_q, GAMMA)),
+                    "pulse_protocol": PULSE_PROTOCOL,
+                    "pulse_duration": (
+                        SQUARE_DURATION if PULSE_PROTOCOL == "square" else None
+                    ),
+                    "exception": traceback.format_exc(),
+                }
                 traceback.print_exc()
+                failure_path = log_path.with_suffix(".failed.json")
+                with open(failure_path, "w", encoding="utf-8") as failure_fh:
+                    json.dump(failure, failure_fh, indent=2)
                 raise
 
+    quality_path = log_path.with_suffix(".quality.json")
+    with open(quality_path, "w", encoding="utf-8") as quality_fh:
+        json.dump(diagnostics, quality_fh, indent=2)
     return i, j, t, current, str(log_path)
 
 
@@ -349,7 +479,7 @@ def precompute_currents_parallel(
         raise ValueError("log_dir must be provided for parallel precomputation.")
 
     t_ref: np.ndarray | None = None
-    J_grid = np.empty((len(W_grid), len(gq_grid), n_t), dtype=np.complex128)
+    J_grid = np.full((len(W_grid), len(gq_grid), n_t), np.nan, dtype=float)
 
     jobs: list[tuple[int, int, float, float, str, float, int, str]] = [
         (i, j, float(W), float(gq), alpha, t_max, n_t, str(log_dir))
@@ -375,17 +505,32 @@ def precompute_currents_parallel(
     print(f"log_dir = {log_dir}")
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(_compute_current_job, *job) for job in jobs]
+        futures = {
+            executor.submit(_compute_current_job, *job): job for job in jobs
+        }
 
         for future in as_completed(futures):
-            i, j, t, current, log_path = future.result()
+            job = futures[future]
+            try:
+                i, j, t, current, log_path = future.result()
+            except Exception as exc:
+                if not CONTINUE_ON_FAILURE:
+                    raise
+                i, j, W, gq = job[:4]
+                count += 1
+                print(
+                    f"Failed current {count}/{total} | (i={i}, j={j}) | "
+                    f"W={W:.3f}, g_q={gq:.3f} | {type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+                continue
 
             if t_ref is None:
                 t_ref = t
             elif not np.allclose(t, t_ref):
                 raise ValueError("Inconsistent time grids encountered during precomputation.")
 
-            J_grid[i, j, :] = current
+            J_grid[i, j, :] = np.real(current)
             count += 1
 
             print(
@@ -397,7 +542,15 @@ def precompute_currents_parallel(
             )
 
     if t_ref is None:
-        raise RuntimeError("No currents were computed.")
+        if not CONTINUE_ON_FAILURE:
+            raise RuntimeError("No currents were computed.")
+        fallback = (
+            square_time_grid(t_max, n_t, SQUARE_DURATION)
+            if PULSE_PROTOCOL == "square"
+            else np.linspace(0.0, t_max, n_t)
+        )
+        t_ref = time_to_ps(fallback, GAMMA)
+        print("No parameter set succeeded; preserved failure diagnostics only.")
 
     print()
     print("#" * 82)
@@ -419,7 +572,7 @@ def precompute_currents_serial(
         raise ValueError("log_dir must be provided for serial precomputation.")
 
     t_ref: np.ndarray | None = None
-    J_grid = np.empty((len(W_grid), len(gq_grid), n_t), dtype=np.complex128)
+    J_grid = np.full((len(W_grid), len(gq_grid), n_t), np.nan, dtype=float)
 
     total = len(W_grid) * len(gq_grid)
     count = 0
@@ -440,6 +593,8 @@ def precompute_currents_serial(
     for i, W in enumerate(W_grid):
         for j, gq in enumerate(gq_grid):
             log_path = worker_log_path(log_dir, i, j, float(W), float(gq))
+            failed_exception: Exception | None = None
+            diagnostics: dict = {}
 
             with open(log_path, "w", encoding="utf-8", buffering=1) as raw_fh:
                 writer = TimestampedWriter(raw_fh)
@@ -450,29 +605,81 @@ def precompute_currents_serial(
                     print(f"job indices: i={i}, j={j}")
                     print(f"W={W:.6f}")
                     print(f"g_q={gq:.6f}")
+                    print(f"g_q units=meV; resolved g_q/Gamma={energy_mev_to_gamma(gq, GAMMA):.6e}")
+                    print(f"pulse_protocol={PULSE_PROTOCOL}")
+                    if PULSE_PROTOCOL == "square":
+                        print(f"pulse_duration={SQUARE_DURATION} hbar/Gamma")
+                    print(
+                        "stationary_reference="
+                        f"{'biased' if PULSE_PROTOCOL == 'downward' else 'unbiased'}"
+                    )
                     print(f"alpha={alpha}")
                     print(f"t_max={t_max}")
                     print(f"n_t={n_t}")
                     print("#" * 82)
 
-                    t, current = compute_current(
-                        W=float(W),
-                        g_q=float(gq),
-                        alpha=alpha,
-                        t_max=t_max,
-                        n_t=n_t,
-                    )
+                    try:
+                        t, current, diagnostics = _compute_current_with_diagnostics(
+                            W=float(W),
+                            g_q=float(gq),
+                            alpha=alpha,
+                            t_max=t_max,
+                            n_t=n_t,
+                        )
+                        print("Serial job finished successfully")
+                        print(f"max|J| = {np.max(np.abs(current)):.6e} µA")
+                        print("Quality diagnostics:")
+                        for key, value in diagnostics.items():
+                            print(f"  {key}={value}")
+                        print(f"log_path = {log_path}")
+                    except Exception as exc:
+                        import traceback
+                        failed_exception = exc
+                        print("Serial job failed with exception:")
+                        traceback.print_exc()
 
-                    print("Serial job finished successfully")
-                    print(f"max|J| = {np.max(np.abs(current)):.6e} µA")
-                    print(f"log_path = {log_path}")
+            if failed_exception is not None:
+                failure_path = log_path.with_suffix(".failed.json")
+                with open(failure_path, "w", encoding="utf-8") as failure_fh:
+                    json.dump(
+                        {
+                            "status": "failed",
+                            "W": float(W),
+                            "g_q_input_meV": float(gq),
+                            "g_q_resolved_Gamma": float(
+                                energy_mev_to_gamma(gq, GAMMA)
+                            ),
+                            "pulse_protocol": PULSE_PROTOCOL,
+                            "pulse_duration": (
+                                SQUARE_DURATION if PULSE_PROTOCOL == "square" else None
+                            ),
+                            "exception_type": type(failed_exception).__name__,
+                            "message": str(failed_exception),
+                        },
+                        failure_fh,
+                        indent=2,
+                    )
+                count += 1
+                print(
+                    f"Failed current {count}/{total} | (i={i}, j={j}) | "
+                    f"W={float(W):.3f}, g_q={float(gq):.3f} | "
+                    f"{type(failed_exception).__name__}: {failed_exception}",
+                    flush=True,
+                )
+                if CONTINUE_ON_FAILURE:
+                    continue
+                raise failed_exception
+
+            quality_path = log_path.with_suffix(".quality.json")
+            with open(quality_path, "w", encoding="utf-8") as quality_fh:
+                json.dump(diagnostics, quality_fh, indent=2)
 
             if t_ref is None:
                 t_ref = t
             elif not np.allclose(t, t_ref):
                 raise ValueError("Inconsistent time grids encountered during precomputation.")
 
-            J_grid[i, j, :] = current
+            J_grid[i, j, :] = np.real(current)
             count += 1
 
             print(
@@ -484,7 +691,15 @@ def precompute_currents_serial(
             )
 
     if t_ref is None:
-        raise RuntimeError("No currents were computed.")
+        if not CONTINUE_ON_FAILURE:
+            raise RuntimeError("No currents were computed.")
+        fallback = (
+            square_time_grid(t_max, n_t, SQUARE_DURATION)
+            if PULSE_PROTOCOL == "square"
+            else np.linspace(0.0, t_max, n_t)
+        )
+        t_ref = time_to_ps(fallback, GAMMA)
+        print("No parameter set succeeded; preserved failure diagnostics only.")
 
     print()
     print("#" * 82)
@@ -539,10 +754,14 @@ def configure_matplotlib(use_tex: bool = USE_TEX) -> None:
 
 
 def make_title(alpha: str, W: float, g_q: float) -> str:
+    duration = (
+        rf",\quad s={SQUARE_DURATION:g}\,\hbar/\Gamma"
+        if PULSE_PROTOCOL == "square" else ""
+    )
     return (
-        rf"Transient current $J_{{{alpha}}}(t)$"
+        rf"{PULSE_PROTOCOL.capitalize()} transient current $J_{{{alpha}}}(t)$"
         "\n"
-        rf"$W={W:.3f}\Gamma,\quad g_q={g_q:.3f}\Gamma$"
+        rf"$W={W:.3f}\Gamma,\quad g_q={g_q:.3f}\,\mathrm{{meV}}{duration}$"
     )
 
 
@@ -566,6 +785,11 @@ def save_current_plot_svg(
         linewidth=2.0,
         label=rf"$J_{{{alpha}}}(t)$",
     )
+    if PULSE_PROTOCOL == "square":
+        ax.axvline(
+            float(time_to_ps(SQUARE_DURATION, GAMMA)), color="0.25",
+            linestyle=":", linewidth=1.5, label=rf"turnoff $s$",
+        )
 
     ax.set_xlabel(r"$t$ (ps)")
     ax.set_ylabel(make_ylabel(alpha))
@@ -586,9 +810,18 @@ def save_all_current_plots_svg(
 ) -> None:
     total = len(W_grid) * len(gq_grid)
     count = 0
+    failed = 0
 
     for i, W in enumerate(W_grid):
         for j, gq in enumerate(gq_grid):
+            if not np.all(np.isfinite(J_grid_uA[i, j, :])):
+                failed += 1
+                print(
+                    f"Skipped failed figure {failed} → W={float(W):.3f}, "
+                    f"g_q={float(gq):.3f}",
+                    flush=True,
+                )
+                continue
             out_path = figure_path(fig_dir, alpha, float(W), float(gq))
             save_current_plot_svg(
                 t_ps=t_ps,
@@ -603,7 +836,8 @@ def save_all_current_plots_svg(
 
     print()
     print("#" * 82)
-    print(f"Saved {total} SVG figures to {fig_dir}")
+    print(f"Saved {count} SVG figures to {fig_dir}")
+    print(f"Skipped {failed} failed parameter sets")
     print("#" * 82)
 
 
@@ -650,7 +884,7 @@ def show_single_reference_plot(
 # =============================================================================
 
 def main() -> None:
-    run_dir = make_run_dir()
+    run_dir = make_run_dir(protocol=PULSE_PROTOCOL)
     log_dir = run_dir / "logs"
     fig_dir = run_dir / "figures"
     write_run_metadata(run_dir)
@@ -668,6 +902,13 @@ def main() -> None:
             print(f"run_dir = {run_dir}")
             print(f"log_dir = {log_dir}")
             print(f"fig_dir = {fig_dir}")
+            print(f"PULSE_PROTOCOL = {PULSE_PROTOCOL}")
+            if PULSE_PROTOCOL == "square":
+                print(f"SQUARE_DURATION = {SQUARE_DURATION} hbar/Gamma")
+            print(
+                "STATIONARY_REFERENCE = "
+                f"{'biased' if PULSE_PROTOCOL == 'downward' else 'unbiased'}"
+            )
             print(f"USE_TEX = {USE_TEX}")
             print(f"SAVE_SVG = {SAVE_SVG}")
             print(f"SHOW_PLOTS = {SHOW_PLOTS}")
@@ -686,6 +927,14 @@ def main() -> None:
                 parallel=PARALLEL,
                 max_workers=MAX_WORKERS,
                 log_dir=log_dir,
+            )
+            successful_jobs = int(
+                np.sum(np.all(np.isfinite(J_grid_uA), axis=-1))
+            )
+            failed_jobs = int(J_grid_uA.shape[0] * J_grid_uA.shape[1] - successful_jobs)
+            print(
+                f"Grid summary: {successful_jobs} succeeded, "
+                f"{failed_jobs} failed"
             )
 
             if SAVE_NPY:
@@ -709,7 +958,7 @@ def main() -> None:
                 )
 
             print("#" * 82)
-            print("Run finished successfully")
+            print("Run finished; inspect the grid summary and failure diagnostics")
             print("#" * 82)
 
     if SHOW_PLOTS:
