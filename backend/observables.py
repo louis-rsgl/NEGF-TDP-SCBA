@@ -913,6 +913,8 @@ def _transient_diagnostics(
     diagnostics: dict[str, float | int | bool | str] = {
         "pulse_protocol": sys.pulse_protocol,
         "stationary_reference": "biased" if frozen.reference_is_biased else "unbiased",
+        "stationary_approximation": sys.scba_mode,
+        "transient_approximation": "frozen electron-phonon self-energy",
         "N0": frozen.N0,
         "scba_iterations": frozen.result.n_iter,
         "scba_converged": frozen.result.converged,

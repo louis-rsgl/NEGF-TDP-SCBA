@@ -12,6 +12,7 @@ import numpy as np
 
 from backend.minimal_poles import MINIPOLE_COMMIT
 from backend.observables import current_all, square_time_grid
+from backend.provenance import citation_records, software_provenance
 from backend.system_classes import LeadParams, System
 from backend.units import current_to_uA, energy_mev_to_gamma, time_to_ps
 
@@ -147,6 +148,8 @@ def write_run_metadata(run_dir: Path) -> None:
         "SHOW_PLOTS": SHOW_PLOTS,
         "SAVE_NPY": SAVE_NPY,
         "MINIPOLE_COMMIT": MINIPOLE_COMMIT,
+        "PROVENANCE": software_provenance(),
+        "CITATIONS": citation_records(),
     }
 
     with open(run_dir / "run_info.json", "w", encoding="utf-8") as fh:

@@ -253,6 +253,18 @@ class System:
         self._square_kernel_cache = None
         return self._pole_cache
 
+    def citations(self) -> list[dict]:
+        """Return method and software citation records for this calculation."""
+        from backend.provenance import citation_records
+
+        return citation_records()
+
+    def provenance(self) -> dict:
+        """Return software, runtime, method, units, and numerical settings."""
+        from backend.provenance import system_provenance
+
+        return system_provenance(self)
+
     def require_noneq(self) -> None:
         if self._noneq_solver is None or self._noneq_result is None:
             raise RuntimeError("Nonequilibrium solution not available. Call solve_noneq() first.")

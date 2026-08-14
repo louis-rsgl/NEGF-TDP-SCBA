@@ -126,6 +126,10 @@ def test_upward_current_dispatch_boundaries_and_mismatch_rejection():
     )
     assert result.diagnostics["pulse_protocol"] == "upward"
     assert result.diagnostics["stationary_reference"] == "unbiased"
+    assert result.diagnostics["stationary_approximation"] == "weak_born"
+    assert result.diagnostics["transient_approximation"] == (
+        "frozen electron-phonon self-energy"
+    )
     assert result.diagnostics["unbiased_green_poles"] == 2
     assert result.diagnostics["biased_green_poles"] == 3
     assert result.diagnostics["upward_A0_scaled_error"] <= 1.0

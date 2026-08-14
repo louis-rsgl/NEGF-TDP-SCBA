@@ -11,6 +11,61 @@ runner supports all three protocols through one configuration block.
 The pulse construction extends Maciejko, Wang, and Guo, *Phys. Rev. B* **74**,
 085324 (2006), DOI [10.1103/PhysRevB.74.085324](https://doi.org/10.1103/PhysRevB.74.085324).
 
+## What problem should lead you here?
+
+Use this repository when you need nonlinear transient current, dot occupation,
+or charge-continuity diagnostics for a **single scalar electronic level** with
+**Lorentzian finite-bandwidth leads** and **one fixed stationary phonon mode**
+under one of these voltage histories:
+
+- remove a pre-existing bias: downward step;
+- switch a bias on from an unbiased connected state: upward step;
+- switch a finite rectangular bias on and later off without resetting the
+  state: square pulse.
+
+This approach becomes useful when the wide-band limit would discard relevant
+lead memory and when a stationary electron--phonon Born/SCBA self-energy can be
+held fixed during the pulse. The production runner defaults to strict
+`weak_born` (one complete $O(g^2)$ kernel update); iterative dressed
+`self_consistent` SCBA is available explicitly.
+
+This software is **not intended** for fully time-dependent self-consistent
+electron--phonon dynamics, evolving phonon populations or heating, arbitrary
+waveforms, multiorbital or spinful devices, multiple phonon modes,
+electron--electron interactions, arbitrary lead spectra, GPU, or MPI. Numerical
+convergence does not by itself establish that the Born or frozen-kernel
+approximation is physically valid for a new parameter regime.
+
+If your problem starts from a scientific requirement rather than a repository
+name, use the [problem-to-method index](docs/problem-to-method.md). Detailed
+method pages distinguish prior art from repository-associated extensions:
+
+- [stationary electron--phonon Born kernel](docs/methods/stationary-electron-phonon-kernel.md);
+- [frozen-SCBA upward/downward step transport](docs/methods/frozen-scba-step-pulses.md);
+- [minimal-pole retarded reduction and Green-pole extraction](docs/methods/minimal-pole-retarded-reduction.md);
+- [frozen-SCBA square-pulse matching](docs/methods/frozen-scba-square-pulse.md).
+
+The scientific-method catalog is machine-readable in
+[`scientific-methods.yaml`](scientific-methods.yaml). See the
+[citation guide](docs/citation-guide.md), [reproducibility/API guide](docs/reproducibility.md),
+and [repository audit](docs/repository-audit.md) before adapting or citing the
+work.
+
+## Contribution and attribution boundaries
+
+- The finite-bandwidth partition-free electronic pulse foundation is due to
+  Maciejko, Wang, and Guo; cite their 2006 paper when using or reimplementing
+  that theory.
+- The Minimal Pole Method is due to Zhang, Yu, and Gull; cite their 2024 paper
+  when using or reimplementing MPM.
+- Born and self-consistent Born approximations are established methods and are
+  not claimed as originating in this repository.
+- The v26 repository manuscript describes the frozen stationary
+  electron--phonon kernel and its upward, downward, and square-pulse
+  constructions as extensions of the Maciejko framework. Its DOI/arXiv/journal
+  metadata are not present; the authors must supply the canonical method
+  citation before publication-level novelty or priority claims are made.
+
 ## Model and conventions
 
 The lead linewidth and retarded lead self-energy use the same Lorentzian
@@ -836,12 +891,20 @@ residual are converged.
 
 Louis Rossignol and Hong Guo, McGill University.
 
+If you use the implementation, cite the software record in
+[`CITATION.cff`](CITATION.cff) and the exact Git commit, plus every scientific
+method used. If you independently reimplement a method, cite its scientific
+paper even if this code is not used. The current repository has no release DOI;
+do not infer one. See the [citation guide](docs/citation-guide.md) for the
+method-by-method mapping and unresolved author metadata.
+
 ```bibtex
 @software{rossignol_negf_tdpscba,
   author = {Rossignol, Louis and Guo, Hong},
   title = {NEGF-TDPSCBA: Time-Dependent Quantum Transport with Frozen-SCBA Phonons},
   year = {2026},
   publisher = {GitHub},
-  url = {https://github.com/louis-rsgl/NEGF-TDPSCBA}
+  url = {https://github.com/louis-rsgl/NEGF-TDPSCBA},
+  note = {Cite the exact Git commit; release DOI not yet available}
 }
 ```

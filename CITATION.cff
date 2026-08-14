@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, cite this software record and the scientific
+  publications for each method used. See docs/citation-guide.md.
+type: software
+title: "NEGF-TDPSCBA: Time-Dependent Quantum Transport with Frozen-SCBA Phonons"
+authors:
+  - family-names: Rossignol
+    given-names: Louis
+  - family-names: Guo
+    given-names: Hong
+repository-code: "https://github.com/louis-rsgl/NEGF-TDPSCBA"
+abstract: >-
+  Python implementation of time-dependent nonequilibrium Green-function
+  transport for a scalar electronic level with Lorentzian finite-bandwidth
+  leads and one stationary phonon mode. Stationary weak-Born or
+  self-consistent-Born electron-phonon kernels are frozen during downward,
+  upward, and square voltage pulses; the retarded sector uses a validated
+  minimal-pole representation.
+keywords:
+  - nonequilibrium Green functions
+  - time-dependent quantum transport
+  - electron-phonon interaction
+  - self-consistent Born approximation
+  - finite-bandwidth leads
+  - minimal pole representation
