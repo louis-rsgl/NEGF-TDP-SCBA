@@ -70,7 +70,9 @@ class System:
     mpm_fit_rel_tol: float = 1.5e-1
     mpm_green_rel_tol: float = 2e-2
     mpm_aaa_rtol: float = 1e-6
-    mpm_aaa_max_terms: int = 120
+    mpm_aaa_initial_terms: int = 120
+    mpm_aaa_max_terms: int = 240
+    mpm_aaa_growth_factor: float = 1.5
     pole_residue_tol: float = 1e-10
     pole_causality_tol: float = 1e-10
     pole_merge_tol: float = 1e-7
@@ -178,6 +180,11 @@ class System:
         rep.info(f"  n_iw      = {self.mpm_n_iw}")
         rep.info(f"  beta_fit  = {self.mpm_beta_fit:.6e}")
         rep.info(f"  causal AAA fallback rtol = {self.mpm_aaa_rtol:.3e}")
+        rep.info(
+            "  causal AAA adaptive terms = "
+            f"{self.mpm_aaa_initial_terms}..{self.mpm_aaa_max_terms} "
+            f"(growth {self.mpm_aaa_growth_factor:g})"
+        )
 
         rep.info("Leads:")
         for lead in self.lead_names:

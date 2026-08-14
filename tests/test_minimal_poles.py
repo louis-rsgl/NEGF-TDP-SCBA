@@ -1,8 +1,12 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
+import backend.minimal_poles as minimal_poles
 from backend.minimal_poles import (
     Gbar_R_mpm,
+    _aaa_term_schedule,
     _filter_green_poles,
     green_poles_from_sigma_mpm,
     green_residues,
@@ -84,6 +88,58 @@ def test_green_pole_causality_and_degeneracy_failures():
             np.array([0.1 - 0.2j, 0.1 + 1e-10 - 0.2j]),
             np.array([0.5 + 0.0j, 0.5 + 0.0j]),
         )
+
+
+def test_adaptive_aaa_term_schedule_is_general_and_bounded():
+    assert _aaa_term_schedule(80, 240, 1.5) == (80, 120, 180, 240)
+    assert _aaa_term_schedule(120, 120, 2.0) == (120,)
+    with pytest.raises(ValueError, match="initial_terms"):
+        _aaa_term_schedule(1, 120, 1.5)
+    with pytest.raises(ValueError, match="max_terms"):
+        _aaa_term_schedule(121, 120, 1.5)
+    with pytest.raises(ValueError, match="growth_factor"):
+        _aaa_term_schedule(80, 120, 1.0)
+
+
+def test_pole_builder_grows_aaa_until_full_grid_validation_passes(monkeypatch):
+    calls = []
+
+    def candidate(_sys, _frozen, _tolerance, fit_method="minipole", **kwargs):
+        terms = kwargs.get("aaa_max_terms", 0)
+        calls.append((fit_method, terms))
+        scaled = 0.5 if fit_method == "causal_aaa" and terms >= 120 else 2.0
+        return SimpleNamespace(
+            max_sigma_abs_error=scaled,
+            max_sigma_rel_error=scaled,
+            max_sigma_scaled_error=scaled,
+            max_Gfr_abs_error=scaled,
+            max_Gbar_abs_error=scaled,
+            max_Gfr_scaled_error=scaled,
+            max_Gbar_scaled_error=scaled,
+            fit_terms=terms,
+            fit_converged=terms >= 120,
+        )
+
+    monkeypatch.setattr(minimal_poles, "_build_candidate", candidate)
+    sys = SimpleNamespace(
+        g_q=1.0,
+        mpm_tol=1e-8,
+        mpm_aaa_rtol=1e-6,
+        mpm_aaa_initial_terms=80,
+        mpm_aaa_max_terms=240,
+        mpm_aaa_growth_factor=1.5,
+    )
+    frozen = SimpleNamespace(w=np.linspace(-1.0, 1.0, 1001))
+
+    cache = minimal_poles.build_pole_cache(sys, frozen)
+
+    assert cache.max_sigma_scaled_error == 0.5
+    assert calls == [
+        ("minipole", 0),
+        ("minipole", 0),
+        ("causal_aaa", 80),
+        ("causal_aaa", 120),
+    ]
 
 
 def test_upward_nonzero_coupling_reconstructs_both_propagators():

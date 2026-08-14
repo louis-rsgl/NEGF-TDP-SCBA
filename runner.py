@@ -36,6 +36,9 @@ N0_DEFAULT: float | None = None
 MPM_TOL: float = 1e-8
 MPM_N_IW: int = 512
 MPM_BETA_FIT: float = 80.0
+MPM_AAA_INITIAL_TERMS: int = 120
+MPM_AAA_MAX_TERMS: int = 240
+MPM_AAA_GROWTH_FACTOR: float = 1.5
 STATIONARY_MODE = "weak_born"
 PULSE_PROTOCOL = "square"
 SQUARE_DURATION = 3.0  # hbar/Gamma
@@ -43,7 +46,7 @@ SQUARE_DURATION = 3.0  # hbar/Gamma
 W_GRID = np.array([1.0, 2.5, 5.0, 10.0, 20.0, 100.0])
 # Physical electron-phonon couplings in meV.  They are converted exactly once
 # at the runner/backend boundary; System always stores dimensionless g/Gamma.
-GQ_GRID = np.array([0.0, 0.01, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0])
+GQ_GRID = np.array([0.0, 0.01, 0.5, 1.0, 2.5, 5.0])
 
 PARALLEL = False
 MAX_WORKERS = 1
@@ -122,6 +125,9 @@ def write_run_metadata(run_dir: Path) -> None:
         "MPM_TOL": MPM_TOL,
         "MPM_N_IW": MPM_N_IW,
         "MPM_BETA_FIT": MPM_BETA_FIT,
+        "MPM_AAA_INITIAL_TERMS": MPM_AAA_INITIAL_TERMS,
+        "MPM_AAA_MAX_TERMS": MPM_AAA_MAX_TERMS,
+        "MPM_AAA_GROWTH_FACTOR": MPM_AAA_GROWTH_FACTOR,
         "STATIONARY_MODE": STATIONARY_MODE,
         "PULSE_PROTOCOL": PULSE_PROTOCOL,
         "SQUARE_DURATION": SQUARE_DURATION if PULSE_PROTOCOL == "square" else None,
@@ -244,7 +250,7 @@ def make_sys(W: float, g_q: float) -> System:
         e_max=20.0,
         omega_min=-100.0,
         omega_max=100.0,
-        scba_max_iter=5_000 if strong_coupling else 20_000,
+        scba_max_iter=200_000,
         scba_mode=STATIONARY_MODE,
         scba_tol_abs=1e-5,
         scba_tol_rel=1e-4,
@@ -254,6 +260,9 @@ def make_sys(W: float, g_q: float) -> System:
         mpm_tol=MPM_TOL,
         mpm_n_iw=MPM_N_IW,
         mpm_beta_fit=MPM_BETA_FIT,
+        mpm_aaa_initial_terms=MPM_AAA_INITIAL_TERMS,
+        mpm_aaa_max_terms=MPM_AAA_MAX_TERMS,
+        mpm_aaa_growth_factor=MPM_AAA_GROWTH_FACTOR,
         mpm_green_rel_tol=7e-2,
         verbose=VERBOSE,
     )
@@ -903,6 +912,7 @@ def main() -> None:
             print(f"log_dir = {log_dir}")
             print(f"fig_dir = {fig_dir}")
             print(f"PULSE_PROTOCOL = {PULSE_PROTOCOL}")
+            print(f"STATIONARY_MODE = {STATIONARY_MODE}")
             if PULSE_PROTOCOL == "square":
                 print(f"SQUARE_DURATION = {SQUARE_DURATION} hbar/Gamma")
             print(

@@ -27,7 +27,8 @@ logs/
 #other
 *.pdf
 *.tex
-plot_*.py
+plot_ph*.py
+plot_m*.py
 v*.md
 NEGF*md
 

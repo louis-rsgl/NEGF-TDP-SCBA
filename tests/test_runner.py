@@ -1,6 +1,9 @@
 import numpy as np
 
 import runner
+import runner_downward_full_scba
+import runner_square_full_scba
+import runner_upward_full_scba
 
 
 def test_protocol_specific_run_directory_and_default_system(tmp_path):
@@ -92,3 +95,46 @@ def test_all_failed_grid_returns_time_axis(tmp_path, monkeypatch):
     )
     assert np.allclose(time, runner.time_to_ps([0.0, 0.1, 0.2], runner.GAMMA))
     assert np.all(np.isnan(currents))
+
+
+def test_full_scba_protocol_runner_configurations():
+    original = {
+        "pulse": runner.PULSE_PROTOCOL,
+        "mode": runner.STATIONARY_MODE,
+        "duration": runner.SQUARE_DURATION,
+        "t_max": runner.T_MAX,
+        "n_t": runner.N_T,
+        "parallel": runner.PARALLEL,
+        "workers": runner.MAX_WORKERS,
+    }
+    try:
+        runner_downward_full_scba.configure()
+        assert runner.PULSE_PROTOCOL == "downward"
+        assert runner.STATIONARY_MODE == "self_consistent"
+        assert runner.T_MAX == 2.0
+        assert runner.N_T == 201
+        assert runner.PARALLEL is False
+        assert runner.MAX_WORKERS == 1
+
+        runner_upward_full_scba.configure()
+        assert runner.PULSE_PROTOCOL == "upward"
+        assert runner.STATIONARY_MODE == "self_consistent"
+        assert runner.T_MAX == 3.0
+        assert runner.N_T == 201
+        assert runner.PARALLEL is False
+
+        runner_square_full_scba.configure()
+        assert runner.PULSE_PROTOCOL == "square"
+        assert runner.STATIONARY_MODE == "self_consistent"
+        assert runner.SQUARE_DURATION == 3.0
+        assert runner.T_MAX == 6.0
+        assert runner.N_T == 201
+        assert runner.PARALLEL is False
+    finally:
+        runner.PULSE_PROTOCOL = original["pulse"]
+        runner.STATIONARY_MODE = original["mode"]
+        runner.SQUARE_DURATION = original["duration"]
+        runner.T_MAX = original["t_max"]
+        runner.N_T = original["n_t"]
+        runner.PARALLEL = original["parallel"]
+        runner.MAX_WORKERS = original["workers"]

@@ -931,6 +931,8 @@ def _transient_diagnostics(
         "pole_causal": cache.causal,
         "mpm_tolerance": cache.tolerance,
         "pole_fit_method": cache.fit_method,
+        "pole_fit_terms": cache.fit_terms,
+        "pole_fit_converged": cache.fit_converged,
         "mpm_sigma_abs_error": cache.max_sigma_abs_error,
         "mpm_sigma_rel_error": cache.max_sigma_rel_error,
         "mpm_sigma_scaled_error": cache.max_sigma_scaled_error,

@@ -62,9 +62,12 @@ For every parameter set the program performs these steps exactly once:
    subsequently dressed stationary lesser function.
 3. Evaluate the dynamic self-energy on an auxiliary upper-half-plane frequency
    grid and fit it with MiniPole. If that continuation fails in a narrow band,
-   a causal AAA fallback discovers real-axis candidate poles, discards every
-   upper-half-plane candidate, refits the lower-plane residues, and must pass
-   the same self-energy, Green-function, pole, and causality gates.
+   an adaptive causal AAA fallback discovers real-axis candidate poles,
+   discards every upper-half-plane candidate, and refits the lower-plane
+   residues. Its pole budget grows geometrically until the same self-energy,
+   Green-function, pole, and causality gates pass or the configured general
+   work limit is exhausted. This refinement is driven only by reconstruction
+   errors; it contains no special cases for particular values of $W$ or $g$.
 4. Reconstruct both the unbiased $G_{\mathrm{fr}}^R$ and biased
    $G_{\mathrm{ss}}^R$ from the same fitted self-energy. A generalized arrowhead
    eigenproblem extracts both Green-pole sets; MiniPole self-energy poles are
@@ -501,6 +504,67 @@ Do not change `PULSE_PROTOCOL` on a `System` after its stationary state has
 been built. Upward and square runs freeze an unbiased stationary kernel;
 downward runs freeze a biased kernel. The backend rejects a mismatched cache.
 
+### Dedicated full-SCBA protocol runners
+
+Three entry points run the complete production grids with
+`STATIONARY_MODE = "self_consistent"`:
+
+| Script | Protocol | Time interval | Pulse duration |
+|---|---|---:|---:|
+| `runner_downward_full_scba.py` | downward | $0\le t\le2$ | not applicable |
+| `runner_upward_full_scba.py` | upward | $0\le t\le3$ | not applicable |
+| `runner_square_full_scba.py` | square | $0\le t\le6$ | $s=3$ |
+
+Each specialized runner uses `N_T = 201`, the common production `W_GRID` and
+physical-meV `GQ_GRID`, and `CONTINUE_ON_FAILURE = True`. Each is serial
+internally (`PARALLEL = False`) so the three protocols can be launched at the
+same time without creating nested worker pools:
+
+```bash
+nohup env MPLCONFIGDIR=/tmp/negf-mpl-downward \
+  python runner_downward_full_scba.py \
+  > nohup_downward_full_scba.out 2>&1 &
+pid_downward=$!
+
+nohup env MPLCONFIGDIR=/tmp/negf-mpl-upward \
+  python runner_upward_full_scba.py \
+  > nohup_upward_full_scba.out 2>&1 &
+pid_upward=$!
+
+nohup env MPLCONFIGDIR=/tmp/negf-mpl-square \
+  python runner_square_full_scba.py \
+  > nohup_square_full_scba.out 2>&1 &
+pid_square=$!
+```
+
+Check all three shell processes with:
+
+```bash
+ps -p "$pid_downward,$pid_upward,$pid_square" -o pid,etime,cmd
+```
+
+From a new shell, where those variables no longer exist, use:
+
+```bash
+pgrep -af 'python.*runner_(downward|upward|square)_full_scba.py'
+```
+
+Follow their master output independently:
+
+```bash
+tail -f nohup_downward_full_scba.out
+tail -f nohup_upward_full_scba.out
+tail -f nohup_square_full_scba.out
+```
+
+Running all three simultaneously is substantially more expensive than the
+weak-Born production runner. Each process independently holds an SCBA grid,
+MiniPole data, and transient integration buffers. Confirm adequate RAM and
+start with the reduced smoke grids below if full-SCBA convergence has not yet
+been established for the requested couplings. A numerically converged SCBA
+solution at $g/\Gamma\gtrsim1$ is not by itself proof that the approximation is
+physically controlled.
+
 ### Select the parameter sweep
 
 The production grids are ordinary NumPy arrays:
@@ -541,6 +605,23 @@ OMEGA_INT_N_OMEGA = 1001
 MPM_N_IW = 512
 MPM_BETA_FIT = 80.0
 ```
+
+The backend causal-AAA controls are protocol- and parameter-independent:
+
+```python
+mpm_aaa_initial_terms = 120
+mpm_aaa_max_terms = 240
+mpm_aaa_growth_factor = 1.5
+```
+
+These defaults try pole budgets 120, 180, and 240, stopping at the first
+candidate that passes the full stationary-grid validation. Quality JSON files
+record `pole_fit_terms` and `pole_fit_converged`; for causal AAA, the latter
+describes the much tighter raw candidate-discovery target. A causal refit may
+still be accepted when that flag is false, but only if the self-energy and both
+Green-function reconstruction gates pass on the complete stationary grid.
+Reaching the maximum pole budget without passing all reconstruction gates
+aborts the job.
 
 `OMEGA_INT_N_X` and `OMEGA_INT_N_OMEGA` must match in the current
 implementation. Current evaluation scales approximately as

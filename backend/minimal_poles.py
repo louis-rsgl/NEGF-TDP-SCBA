@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import warnings
 
 import numpy as np
 
@@ -30,6 +31,8 @@ class PoleCache:
     max_Gbar_scaled_error: float
     causal: bool
     fit_method: str = "minipole"
+    fit_terms: int = 0
+    fit_converged: bool = True
 
     @property
     def n_sigma_poles(self) -> int:
@@ -267,7 +270,31 @@ def _fit_with_minipole(frozen: FrozenSCBA, sys, tolerance: float):
     return zeta, weights
 
 
-def _fit_with_causal_aaa(frozen: FrozenSCBA, sys):
+def _aaa_term_schedule(initial: int, maximum: int, growth: float) -> tuple[int, ...]:
+    """Return a finite geometric work schedule ending exactly at ``maximum``."""
+    if initial < 2:
+        raise ValueError("mpm_aaa_initial_terms must be at least 2.")
+    if maximum < initial:
+        raise ValueError(
+            "mpm_aaa_max_terms must be greater than or equal to "
+            "mpm_aaa_initial_terms."
+        )
+    if not np.isfinite(growth) or growth <= 1.0:
+        raise ValueError("mpm_aaa_growth_factor must be finite and greater than 1.")
+
+    values = [int(initial)]
+    while values[-1] < maximum:
+        following = max(values[-1] + 1, int(np.ceil(values[-1] * growth)))
+        values.append(min(following, int(maximum)))
+    return tuple(values)
+
+
+def _fit_with_causal_aaa(
+    frozen: FrozenSCBA,
+    sys,
+    *,
+    max_terms: int,
+):
     """Discover real-axis poles with AAA, then causally refit their residues.
 
     AAA is used only for candidate locations. Upper-half-plane candidates and
@@ -281,12 +308,32 @@ def _fit_with_causal_aaa(frozen: FrozenSCBA, sys):
     except ImportError as exc:
         raise RuntimeError("SciPy AAA fallback is unavailable.") from exc
 
-    fit = AAA(
-        frozen.w,
-        frozen.Sigma_ep_dyn_R,
-        rtol=sys.mpm_aaa_rtol,
-        max_terms=min(sys.mpm_aaa_max_terms, len(frozen.w) - 1),
-        clean_up=True,
+    effective_max_terms = min(int(max_terms), len(frozen.w) - 1)
+    if effective_max_terms < 2:
+        raise RuntimeError("The stationary grid is too small for causal AAA.")
+    # SciPy warns when it reaches the work limit.  That does not by itself
+    # invalidate our causal refit: the full-grid Sigma/G validation below is
+    # the scientific acceptance criterion.  Record the state in PoleCache and
+    # avoid emitting one warning for every adaptive attempt.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"AAA failed to converge within .* iterations\.",
+            category=RuntimeWarning,
+        )
+        fit = AAA(
+            frozen.w,
+            frozen.Sigma_ep_dyn_R,
+            rtol=sys.mpm_aaa_rtol,
+            max_terms=effective_max_terms,
+            clean_up=True,
+        )
+    aaa_errors = np.asarray(fit.errors, dtype=float)
+    aaa_terms = int(len(aaa_errors))
+    target_scale = float(np.max(np.abs(frozen.Sigma_ep_dyn_R)))
+    aaa_converged = bool(
+        aaa_terms > 0
+        and aaa_errors[-1] <= sys.mpm_aaa_rtol * target_scale
     )
     candidates = np.asarray(fit.poles(), dtype=np.complex128).reshape(-1)
     zeta = candidates[candidates.imag < -sys.pole_causality_tol]
@@ -331,12 +378,19 @@ def _fit_with_causal_aaa(frozen: FrozenSCBA, sys):
     weights = weights[keep]
     if len(zeta) == 0:
         raise RuntimeError("All causal AAA residues were negligible.")
-    return zeta, weights
+    return zeta, weights, aaa_terms, aaa_converged
 
 
 def _build_candidate(
-    sys, frozen: FrozenSCBA, tolerance: float, fit_method: str = "minipole"
+    sys,
+    frozen: FrozenSCBA,
+    tolerance: float,
+    fit_method: str = "minipole",
+    *,
+    aaa_max_terms: int | None = None,
 ) -> PoleCache:
+    fit_terms = 0
+    fit_converged = True
     if sys.g_q == 0.0 or np.max(np.abs(frozen.Sigma_ep_dyn_R)) == 0.0:
         zeta = np.empty(0, dtype=np.complex128)
         weights = np.empty(0, dtype=np.complex128)
@@ -344,7 +398,13 @@ def _build_candidate(
         if fit_method == "minipole":
             zeta, weights = _fit_with_minipole(frozen, sys, tolerance)
         elif fit_method == "causal_aaa":
-            zeta, weights = _fit_with_causal_aaa(frozen, sys)
+            if aaa_max_terms is None:
+                raise ValueError("aaa_max_terms is required for causal_aaa.")
+            zeta, weights, fit_terms, fit_converged = _fit_with_causal_aaa(
+                frozen,
+                sys,
+                max_terms=aaa_max_terms,
+            )
         else:
             raise ValueError(f"Unknown self-energy pole fit method {fit_method!r}.")
 
@@ -407,6 +467,8 @@ def _build_candidate(
         max_Gbar_scaled_error=np.inf,
         causal=True,
         fit_method=fit_method,
+        fit_terms=fit_terms,
+        fit_converged=fit_converged,
     )
     direct_Gfr = 1.0 / (
         w_eval - sys.e_0 - frozen.Sigma_H
@@ -449,6 +511,27 @@ def _build_candidate(
         max_Gbar_scaled_error=gbar_scaled,
         causal=True,
         fit_method=fit_method,
+        fit_terms=fit_terms,
+        fit_converged=fit_converged,
+    )
+
+
+def _candidate_is_valid(cache: PoleCache) -> bool:
+    return bool(
+        cache.max_sigma_scaled_error <= 1.0
+        and cache.max_Gfr_scaled_error <= 1.0
+        and cache.max_Gbar_scaled_error <= 1.0
+    )
+
+
+def _candidate_error_summary(cache: PoleCache) -> str:
+    return (
+        f"sigma abs/rel={cache.max_sigma_abs_error:.3e}/"
+        f"{cache.max_sigma_rel_error:.3e}, "
+        f"scaled={cache.max_sigma_scaled_error:.3e}, G errors="
+        f"{cache.max_Gfr_abs_error:.3e}/{cache.max_Gbar_abs_error:.3e}, "
+        f"G scaled={cache.max_Gfr_scaled_error:.3e}/"
+        f"{cache.max_Gbar_scaled_error:.3e}"
     )
 
 
@@ -460,40 +543,44 @@ def build_pole_cache(sys, frozen: FrozenSCBA) -> PoleCache:
     for tolerance in attempts:
         try:
             cache = _build_candidate(sys, frozen, tolerance)
-            valid = (
-                cache.max_sigma_scaled_error <= 1.0
-                and cache.max_Gfr_scaled_error <= 1.0
-                and cache.max_Gbar_scaled_error <= 1.0
-            )
-            if valid:
+            if _candidate_is_valid(cache):
                 return cache
             failures.append(
-                f"tol={tolerance:.1e}: sigma abs/rel="
-                f"{cache.max_sigma_abs_error:.3e}/{cache.max_sigma_rel_error:.3e}, "
-                f"scaled={cache.max_sigma_scaled_error:.3e}, G errors="
-                f"{cache.max_Gfr_abs_error:.3e}/{cache.max_Gbar_abs_error:.3e}, "
-                f"G scaled={cache.max_Gfr_scaled_error:.3e}/{cache.max_Gbar_scaled_error:.3e}"
+                f"tol={tolerance:.1e}: {_candidate_error_summary(cache)}"
             )
         except Exception as exc:
             failures.append(f"tol={tolerance:.1e}: {exc}")
     if sys.g_q != 0.0:
-        try:
-            cache = _build_candidate(
-                sys, frozen, float(sys.mpm_aaa_rtol), fit_method="causal_aaa"
-            )
-            valid = (
-                cache.max_sigma_scaled_error <= 1.0
-                and cache.max_Gfr_scaled_error <= 1.0
-                and cache.max_Gbar_scaled_error <= 1.0
-            )
-            if valid:
-                return cache
-            failures.append(
-                "causal_aaa: sigma abs/rel="
-                f"{cache.max_sigma_abs_error:.3e}/{cache.max_sigma_rel_error:.3e}, "
-                f"scaled={cache.max_sigma_scaled_error:.3e}, G scaled="
-                f"{cache.max_Gfr_scaled_error:.3e}/{cache.max_Gbar_scaled_error:.3e}"
-            )
-        except Exception as exc:
-            failures.append(f"causal_aaa: {exc}")
+        available_terms = len(frozen.w) - 1
+        configured_schedule = _aaa_term_schedule(
+            int(sys.mpm_aaa_initial_terms),
+            int(sys.mpm_aaa_max_terms),
+            float(sys.mpm_aaa_growth_factor),
+        )
+        # Very small test grids may support fewer terms than the configured
+        # production schedule. Clamp only after validating the configuration,
+        # and remove duplicate clamped attempts while preserving order.
+        effective_schedule = tuple(dict.fromkeys(
+            min(max_terms, available_terms)
+            for max_terms in configured_schedule
+        ))
+        for max_terms in effective_schedule:
+            try:
+                cache = _build_candidate(
+                    sys,
+                    frozen,
+                    float(sys.mpm_aaa_rtol),
+                    fit_method="causal_aaa",
+                    aaa_max_terms=max_terms,
+                )
+                if _candidate_is_valid(cache):
+                    return cache
+                failures.append(
+                    f"causal_aaa(max_terms={max_terms}, "
+                    f"terms={cache.fit_terms}, "
+                    f"raw_converged={cache.fit_converged}): "
+                    f"{_candidate_error_summary(cache)}"
+                )
+            except Exception as exc:
+                failures.append(f"causal_aaa(max_terms={max_terms}): {exc}")
     raise RuntimeError("MPM validation failed; " + "; ".join(failures))
