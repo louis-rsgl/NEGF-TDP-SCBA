@@ -2,7 +2,7 @@
 
 Time-dependent nonequilibrium Green-function transport for a single electronic
 level coupled to finite-bandwidth Lorentzian leads and one phonon mode. The
-stationary electron--phonon problem is solved in the self-consistent Born
+stationary electron-phonon problem is solved in the self-consistent Born
 approximation (SCBA); that stationary kernel is frozen during an upward step,
 downward step, or finite square pulse and the transient retarded problem is
 evaluated with a Minimal Pole Method (MPM) representation. The production
@@ -24,13 +24,13 @@ under one of these voltage histories:
   state: square pulse.
 
 This approach becomes useful when the wide-band limit would discard relevant
-lead memory and when a stationary electron--phonon Born/SCBA self-energy can be
+lead memory and when a stationary electron-phonon Born/SCBA self-energy can be
 held fixed during the pulse. The production runner defaults to strict
 `weak_born` (one complete $O(g^2)$ kernel update); iterative dressed
 `self_consistent` SCBA is available explicitly.
 
 This software is **not intended** for fully time-dependent self-consistent
-electron--phonon dynamics, evolving phonon populations or heating, arbitrary
+electron-phonon dynamics, evolving phonon populations or heating, arbitrary
 waveforms, multiorbital or spinful devices, multiple phonon modes,
 electron--electron interactions, arbitrary lead spectra, GPU, or MPI. Numerical
 convergence does not by itself establish that the Born or frozen-kernel
@@ -40,7 +40,7 @@ If your problem starts from a scientific requirement rather than a repository
 name, use the [problem-to-method index](docs/problem-to-method.md). Detailed
 method pages distinguish prior art from repository-associated extensions:
 
-- [stationary electron--phonon Born kernel](docs/methods/stationary-electron-phonon-kernel.md);
+- [stationary electron-phonon Born kernel](docs/methods/stationary-electron-phonon-kernel.md);
 - [frozen-SCBA upward/downward step transport](docs/methods/frozen-scba-step-pulses.md);
 - [minimal-pole retarded reduction and Green-pole extraction](docs/methods/minimal-pole-retarded-reduction.md);
 - [frozen-SCBA square-pulse matching](docs/methods/frozen-scba-square-pulse.md).
@@ -61,7 +61,7 @@ work.
 - Born and self-consistent Born approximations are established methods and are
   not claimed as originating in this repository.
 - The v26 repository manuscript describes the frozen stationary
-  electron--phonon kernel and its upward, downward, and square-pulse
+  electron-phonon kernel and its upward, downward, and square-pulse
   constructions as extensions of the Maciejko framework. Its DOI/arXiv/journal
   metadata are not present; the authors must supply the canonical method
   citation before publication-level novelty or priority claims are made.
@@ -106,7 +106,7 @@ For every parameter set the program performs these steps exactly once:
 
 1. Build the protocol's stationary kernel: unbiased before an upward step or
    square pulse and biased before a downward step. The runner uses strict weak-coupling
-   `weak_born` mode: construct the complete $O(g^2)$ electron--phonon
+   `weak_born` mode: construct the complete $O(g^2)$ electron-phonon
    self-energy from the no-phonon stationary reference, then solve the fixed
    Dyson/Keldysh equations once. `self_consistent` mode remains available for
    dressed SCBA studies and uses Pulay/DIIS mixing of both components.
@@ -128,7 +128,7 @@ For every parameter set the program performs these steps exactly once:
    eigenproblem extracts both Green-pole sets; MiniPole self-energy poles are
    never inserted directly into a transient residue sum.
 5. Evaluate the selected protocol's $A$, $B$, $C$, and $D$ functions
-   and the full lead plus frozen-electron--phonon lesser current. Downward uses
+   and the full lead plus frozen-electron-phonon lesser current. Downward uses
    the unbiased pole set and upward uses the biased pole set. Square uses the
    upward solution until $s$, then combines the stored biased-pole history
    with unbiased-pole post-turnoff propagation.
