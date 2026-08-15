@@ -1,4 +1,4 @@
-# NEGF-TDPSCBA
+# NEGF-TDP-FrSCBA
 
 Time-dependent nonequilibrium Green-function transport for a single electronic
 level coupled to finite-bandwidth Lorentzian leads and one phonon mode. The
