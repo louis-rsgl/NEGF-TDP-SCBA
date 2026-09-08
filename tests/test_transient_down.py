@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-from backend.distribution import expc
-from backend.minimal_poles import Gbar_R_mpm, Gfr_R_mpm
-from backend.observables import (
+from psscba.backend.model.distributions import expc
+from psscba.backend.poles.minimal import Gbiased_R_mpm, Gfr_R_mpm
+from psscba.backend.protocols.analytic import (
     A_down,
     A_down_direct,
     B_down,
@@ -23,18 +23,18 @@ def test_expc_series_and_exact_zero():
 
 def test_downward_boundaries_for_phonon_free_case():
     sys = make_system()
-    sys.solve_noneq()
+    sys.solve_stationary()
     cache = sys.prepare_poles()
     energies = np.linspace(-2.0, 2.0, 17)
     a0 = A_down(sys, energies, 0.0, "L", cache)
-    expected_a = Gbar_R_mpm(sys, cache, energies + sys.Delta("L"))
+    expected_a = Gbiased_R_mpm(sys, cache, energies + sys.Delta("L"))
     assert np.max(np.abs(a0 - expected_a)) < 2e-4
     assert np.max(np.abs(B_down(sys, energies, energies, 0.0, "L", cache))) == 0.0
     a_long = A_down(sys, energies, 50.0, "L", cache)
     assert np.max(np.abs(a_long - Gfr_R_mpm(sys, cache, energies))) < 1e-10
     for omega in (-sys.w_q, sys.w_q):
         c0 = C_down(sys, omega, energies, 0.0, cache)
-        expected_c = Gbar_R_mpm(sys, cache, energies + omega)
+        expected_c = Gbiased_R_mpm(sys, cache, energies + omega)
         assert np.max(np.abs(c0 - expected_c)) < 2e-4
         assert np.max(np.abs(D_down(sys, omega, energies, energies, 0.0, cache))) == 0.0
 
@@ -63,7 +63,7 @@ def test_current_grid_honors_transport_window_when_counts_match():
 
 def test_A_residue_matches_defining_real_axis_quadrature():
     sys = make_system(ETA=2e-4, e_min=-100.0, e_max=100.0)
-    sys.solve_noneq()
+    sys.solve_stationary()
     cache = sys.prepare_poles()
     residue = A_down(sys, -0.3, 0.2, "L", cache)
     direct = A_down_direct(sys, -0.3, 0.2, "L", cache)

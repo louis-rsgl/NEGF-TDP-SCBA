@@ -1,0 +1,133 @@
+config_format: "negf-tdp-ps-scba"
+model:
+  gamma_eV: 0.01
+  gamma_left: 0.5
+  gamma_right: 0.5
+  epsilon_0: 0.0
+  device_shift: 5.0
+  left_shift: 10.0
+  right_shift: 0.0
+  beta: 10.0
+  beta_ph: 20.0
+  # Manuscript reference frequency, in units of Gamma.
+  phonon_energy: 0.2
+  phonon_occupation: null
+  bandwidth: 20.0
+  coupling_meV: 1.0
+protocol:
+  name: upward
+  duration: null
+projection:
+  # Keep a short stationary prehistory for the projector; reported protocol
+  # evolution follows the original 0--3/2/6 hbar/Gamma windows below.
+  time_min: -2.0
+  time_max: 6.0
+  time_step: 0.01
+  weight: uniform
+  dense_validation: false
+  reconstruction_lead: L
+  lag_batch: 64
+  energy_batch: 64
+numerics:
+  energy_min: -200.0
+  energy_max: 200.0
+  # One common fine grid for every bandwidth in the production sweep.
+  energy_step: 0.02
+  # Stationary-grid/fit regulator only.  Transient pole observables use the
+  # analytic eta->0+ boundary value; this value must still be converged for
+  # the stationary initialization.
+  eta: 0.00001
+  stationary_max_iter: 200000
+  stationary_tolerance_abs: 1.0e-7
+  stationary_tolerance_rel: 1.0e-6
+  stationary_mixing: 0.05
+  outer_max_iter: 2000
+  outer_tolerance: 1.0e-5
+  outer_mixing: 0.05
+  sigma_floor: 1.0e-12
+  green_floor: 1.0e-12
+  mpm_search_tolerance: 1.0e-6
+  mpm_final_tolerance: 1.0e-8
+  mpm_n_iw: 512
+  mpm_beta_fit: 80.0
+  mpm_aaa_initial_terms: 120
+  mpm_aaa_max_terms: 480
+  mpm_aaa_growth_factor: 1.5
+  # Production currents use exactly the same grid as reconstruction and SCBA.
+  current_energy_min: null
+  current_energy_max: null
+  current_energy_points: null
+  current_time_points: null
+  current_method: finite_window
+  # Compatibility field only; finite_window always uses the pole/Filon
+  # evaluator. Use current_method=direct_oracle for the literal reference.
+  current_representation: psi
+  collision_prehistory_quadrature_order: 64
+  collision_prehistory_scale: 1.0
+  checkpoint_every: 1
+  enforce_hard_gates: true
+  verbose: false
+campaign:
+  bandwidths: [1.0, 2.5, 5.0, 10.0, 20.0, 100.0]
+  couplings_meV: [0.0, 0.01, 0.5, 1.0, 2.5, 5.0]
+  phonon_energies: [0.2]
+  protocols: [upward, downward, square]
+  square_duration: 3.0
+  time_max_by_protocol:
+    upward: 3.0
+    downward: 2.0
+    square: 6.0
+  compare_preparation_fixed: true
+  # Four BLAS threads and ten workers keep the mixed PS-SCBA plus
+  # preparation-fixed sweep below the memory budget. Preparation-fixed jobs
+  # use dense two-time storage and are substantially larger than production
+  # PS-SCBA jobs.
+  max_workers: 10
+  blas_threads: 4
+validation:
+  # All validation axes are declared here; the runner does not substitute a
+  # physical phonon frequency in Python.
+  frequencies: [0.1, 0.2, 0.5, 1.0, 2.0]
+  couplings_meV: [0.0, 0.01, 0.1, 0.5, 1.0, 2.5, 5.0]
+  trusted_couplings_meV: [0.0, 0.01, 0.1, 0.5, 1.0]
+  diagnostic_couplings_meV: [2.5, 5.0]
+  bandwidths: [1.0, 2.5, 5.0, 10.0, 20.0, 100.0]
+  protocols: [upward, downward, square]
+  hot_occupation: 1.0
+  square_durations: [0.0, 0.5, 2.0, 3.0, 5.5]
+  dense_time_max: 3.0
+  compact_energy_bound: 20.0
+  time_steps: [0.04, 0.02, 0.01]
+  reconstruction_energy_bounds: [40.0, 80.0, 160.0, 200.0]
+  reconstruction_energy_steps: [0.1, 0.05, 0.025, 0.02]
+  current_energy_bounds: [20.0, 40.0, 80.0, 160.0, 200.0]
+  current_energy_steps: [0.1, 0.05, 0.025, 0.02]
+  prehistory_time_mins: [-2.0, -4.0, -8.0, -16.0]
+  prehistory_quadrature_orders: [32, 64, 128]
+  prehistory_scales: [0.5, 1.0, 2.0]
+  stationary_etas: [1.0e-3, 1.0e-4, 1.0e-5]
+  mpm_tolerances: [1.0e-6, 1.0e-8, 1.0e-10]
+  streamed_window_mins: [-2.0, -4.0, -8.0, -16.0]
+  streamed_window_maxs: [3.0, 6.0, 12.0, 24.0]
+  approximation_pairwise: true
+  hot_stress_pairwise: true
+  compare_preparation_fixed: true
+tracking:
+  enabled: true
+  live_refresh_seconds: 10.0
+  heartbeat_seconds: 60.0
+  convergence_refresh_steps: 1
+  resource_sampling: true
+  memory_policy: warn
+  memory_warning_factor: 1.25
+plotting:
+  enabled: true
+  formats: [svg]
+  style: serif_mathtext
+  natural_units: true
+  physical_qa_units: true
+  physical_publication_figures: true
+  separate_lead_currents: true
+  automatic_qa_refresh: true
+  use_external_latex: false
+output_root: runs

@@ -1,1 +1,1 @@
-"""Tests for the frozen-SCBA and downward-pulse implementation."""
+"""Tests for projected stationary SCBA and its fixed-kernel inner solver."""

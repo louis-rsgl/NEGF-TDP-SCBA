@@ -1,38 +1,33 @@
-# Python bytecode / cache
+# Python and tooling
 __pycache__/
 *.py[cod]
-*$py.class
-
-# Virtual envs
 .venv/
 venv/
-env/
-
-# Test / tooling caches
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 
-# macOS / editor noise
+# Editors and local agents
 .DS_Store
 .vscode/
 .idea/
+.agents/
+.codex/
 
-# Run outputs and logs
+# Generated numerical products
+/runs/
+/logs/
+/build/
+/*.egg-info/
 *.out
 *.log
-run_*/
-logs/
-
-#other
+\.nfs*
 *.pdf
-*.tex
-plot_ph*.py
-plot_m*.py
-v*.md
-NEGF*md
 
-#agents
-
-.agents
-.codex
+# Local scientific source and archived large numerical references
+/aps.tex
+/archive/OLD_PLOTTING_RESULTS/
+/archive/runtime_history_2026-09-02/logs/
+/archive/runtime_history_2026-09-02/runs/
+/archive*
+/configs*

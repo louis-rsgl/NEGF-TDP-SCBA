@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from backend.SCBA import SCBAConvergenceError, Solver
-from backend.system_classes import LeadParams, System
+from psscba.backend.model.system import LeadParams, System
+from psscba.backend.stationary.scba import SCBAConvergenceError, Solver
 
 
 def make_system(**changes):
@@ -57,24 +57,26 @@ def test_hilbert_transform_sign_on_lorentzian():
     assert np.max(np.abs(calculated[np.abs(w) < 10] - exact[np.abs(w) < 10])) < 2e-4
 
 
-def test_g_zero_stationary_solution_and_frozen_arrays():
+def test_g_zero_stationary_solution_and_installed_arrays():
     sys = make_system()
-    result = sys.solve_noneq()
-    frozen = sys.frozen_scba()
-    lead = sys._noneq_solver.sigma_lead_R(frozen.w)
+    result = sys.solve_stationary()
+    frozen = sys.stationary_kernel()
+    lead = sys._stationary_solver.sigma_lead_R(frozen.w)
     expected = 1.0 / (
         frozen.w - sys.e_0 - sys.DELTA - lead + 1j * sys.ETA
     )
     assert result.converged
-    assert np.max(np.abs(frozen.Gbar_R - expected)) < 1e-12
+    assert np.max(np.abs(frozen.G_reference_R - expected)) < 1e-12
     assert frozen.N0 == pytest.approx(1.0 / np.expm1(sys.beta_ph * sys.w_q))
-    assert not frozen.Gbar_R.flags.writeable
+    assert not frozen.G_reference_R.flags.writeable
+    assert not hasattr(sys, "solve_noneq")
+    assert not hasattr(sys, "frozen_scba")
 
 
 def test_upward_stationary_reference_is_unbiased():
     sys = make_system(pulse_protocol="upward", scba_mode="weak_born")
     sys.solve_stationary()
-    frozen = sys.frozen_scba()
+    frozen = sys.stationary_kernel()
     gamma_total = sum(sys.Gamma0(lead) for lead in sys.lead_names)
     expected = 1.0 / (
         frozen.w
@@ -85,7 +87,6 @@ def test_upward_stationary_reference_is_unbiased():
     assert frozen.pulse_protocol == "upward"
     assert not frozen.reference_is_biased
     assert np.max(np.abs(frozen.G_reference_R - expected)) < 1e-12
-    assert frozen.Gbar_R is frozen.G_reference_R
 
 
 def test_upward_unbiased_lesser_fdt_and_nonthermal_N0():
@@ -96,7 +97,7 @@ def test_upward_unbiased_lesser_fdt_and_nonthermal_N0():
         N0=0.37,
     )
     sys.solve_stationary()
-    frozen = sys.frozen_scba()
+    frozen = sys.stationary_kernel()
     fermi = 1.0 / (np.exp(np.clip(sys.beta_fc("L") * frozen.w, -700, 700)) + 1.0)
     expected = fermi * (np.conjugate(frozen.G_reference_R) - frozen.G_reference_R)
     assert frozen.N0 == pytest.approx(0.37)
@@ -105,8 +106,8 @@ def test_upward_unbiased_lesser_fdt_and_nonthermal_N0():
 
 def test_interpolation_uses_controlled_tails_and_rejects_complex_grid_queries():
     sys = make_system()
-    sys.solve_noneq()
-    solver = sys._noneq_solver
+    sys.solve_stationary()
+    solver = sys._stationary_solver
     assert solver.Gless(sys.e_max + 10.0) == 0.0j
     assert solver.GR(sys.e_max + 10.0) == pytest.approx(
         1.0 / (sys.e_max + 10.0 + 1j * sys.ETA)
@@ -118,4 +119,4 @@ def test_interpolation_uses_controlled_tails_and_rejects_complex_grid_queries():
 def test_nonconvergence_raises():
     sys = make_system(g_q=0.1, scba_max_iter=1, scba_min_iter=2)
     with pytest.raises(SCBAConvergenceError):
-        sys.solve_noneq()
+        sys.solve_stationary()

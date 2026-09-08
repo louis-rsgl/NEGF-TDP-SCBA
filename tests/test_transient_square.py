@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from backend.minimal_poles import Gfr_R_mpm
-from backend.observables import (
+from psscba.backend.poles.minimal import Gfr_R_mpm
+from psscba.backend.protocols.analytic import (
     A_up,
     B_square,
     C_up,
@@ -10,7 +10,7 @@ from backend.observables import (
     current_all,
     square_time_grid,
 )
-from backend.square_pulse import (
+from psscba.backend.protocols.square import (
     A_square,
     C_square,
     _biased_green_times_lead_rational,
@@ -33,10 +33,10 @@ def test_square_stationary_reference_and_two_pole_hierarchies():
     upward = make_system(pulse_protocol="upward", scba_mode="weak_born")
     square.solve_stationary()
     upward.solve_stationary()
-    assert not square.frozen_scba().reference_is_biased
+    assert not square.stationary_kernel().reference_is_biased
     assert np.allclose(
-        square.frozen_scba().G_reference_R,
-        upward.frozen_scba().G_reference_R,
+        square.stationary_kernel().G_reference_R,
+        upward.stationary_kernel().G_reference_R,
     )
     cache = square.prepare_poles()
     assert cache.n_unbiased_green_poles == 2
@@ -112,6 +112,34 @@ def test_square_matches_upward_and_is_continuous_at_turnoff():
     assert np.max(np.abs(D_square(
         sys, sys.w_q, energies, energies, sys.pulse_duration, "L", cache, kernels
     ))) == 0.0
+
+
+def test_wide_band_long_square_cache_uses_finite_scaled_amplitudes():
+    duration = 2.0 * np.pi / 0.2
+    sys = make_square_system(
+        W=100.0,
+        pulse_duration=duration,
+        e_min=-200.0,
+        e_max=200.0,
+        omega_min=-200.0,
+        omega_max=200.0,
+        n_w_scba=8001,
+    )
+    sys.solve_stationary()
+    cache = sys.prepare_poles()
+    energies = np.array([-200.0, -10.0, 0.0, 10.0, 200.0])
+
+    with np.errstate(over="raise", invalid="raise"):
+        kernels = build_square_kernel_cache(sys, energies, cache=cache)
+        post_a = A_square(sys, energies, duration + 1.0, "L", cache, kernels)
+        post_c = C_square(sys, 0.0, energies, duration + 1.0, cache, kernels)
+
+    cached = [*kernels.S_alpha.values(), *kernels.S_C.values()]
+    assert all(np.all(np.isfinite(values)) for values in cached)
+    assert np.all(np.isfinite(post_a))
+    assert np.all(np.isfinite(post_c))
+    assert kernels.turnoff_A_scaled_error <= 1.0
+    assert kernels.turnoff_C_scaled_error <= 1.0
 
 
 def test_zero_duration_has_no_retarded_transient():

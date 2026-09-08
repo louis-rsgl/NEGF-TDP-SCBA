@@ -1,12 +1,12 @@
 import json
 
-from backend.provenance import citation_records, software_provenance
+from psscba.frontend.provenance import citation_records, software_provenance
 from tests.test_frozen_scba import make_system
 
 
 def test_software_provenance_is_json_serializable_and_reports_dependencies():
     provenance = software_provenance()
-    assert provenance["software"]["name"] == "NEGF-TDPSCBA"
+    assert provenance["software"]["name"] == "NEGF-TDP-PS-SCBA"
     assert "commit" in provenance["software"]["git"]
     assert provenance["runtime"]["dependencies"]["numpy"] is not None
     json.dumps(provenance)
