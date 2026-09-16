@@ -31,8 +31,29 @@ plot_ph*.py
 plot_m*.py
 v*.md
 NEGF*md
+analyze_mega_campaign.py
+mega_full_scba/
+campaign_full_scba.py
+*.pid
+mega_diagnose.py
+mega_campaign_full_scba.py
+mega_status.py
+patch_runner_for_campaign.py
+run_full_scba_90.sh
+run_mega_sequencial.sh
+runner.py.pre_campaign
+full_scba_campaign_264
+*sh
+run_for*
 
+frozen_*
+
+forensic*
 #agents
 
 .agents
 .codex
+
+square_ref*
+check*
+*_SWEEP*

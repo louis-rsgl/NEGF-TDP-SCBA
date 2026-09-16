@@ -34,6 +34,24 @@ OMEGA_INT_N_X = 1001
 OMEGA_INT_N_OMEGA = 1001
 
 N0_DEFAULT: float | None = None
+
+# Physical controls. Defaults reproduce the original runner exactly.
+# Energies below are dimensionless in Gamma except where explicitly noted.
+BIAS = 10.0              # Delta_L - Delta_R; convention Delta_R = 0
+DOT_SHIFT = 5.0          # central-level pulse shift DELTA
+EPSILON_0 = 0.0          # bare dot level
+OMEGA_PH = 0.2           # phonon frequency
+GAMMA_L = 0.5
+GAMMA_R = 0.5
+BETA_L = 10.0
+BETA_R = 10.0
+MU_L = 0.0
+MU_R = 0.0
+BETA_PH = 20.0
+MU_PH = 0.0
+BETA_FD = 10.0
+MU_FD = 0.0
+
 MPM_TOL: float = 1e-8
 MPM_N_IW: int = 512
 MPM_BETA_FIT: float = 80.0
@@ -123,6 +141,20 @@ def write_run_metadata(run_dir: Path) -> None:
         "OMEGA_INT_N_X": OMEGA_INT_N_X,
         "OMEGA_INT_N_OMEGA": OMEGA_INT_N_OMEGA,
         "N0": N0_DEFAULT,
+        "BIAS": BIAS,
+        "DOT_SHIFT": DOT_SHIFT,
+        "EPSILON_0": EPSILON_0,
+        "OMEGA_PH": OMEGA_PH,
+        "GAMMA_L": GAMMA_L,
+        "GAMMA_R": GAMMA_R,
+        "BETA_L": BETA_L,
+        "BETA_R": BETA_R,
+        "MU_L": MU_L,
+        "MU_R": MU_R,
+        "BETA_PH": BETA_PH,
+        "MU_PH": MU_PH,
+        "BETA_FD": BETA_FD,
+        "MU_FD": MU_FD,
         "MPM_TOL": MPM_TOL,
         "MPM_N_IW": MPM_N_IW,
         "MPM_BETA_FIT": MPM_BETA_FIT,
@@ -225,30 +257,30 @@ def make_sys(W: float, g_q: float) -> System:
         pulse_protocol=PULSE_PROTOCOL,
         pulse_duration=SQUARE_DURATION if PULSE_PROTOCOL == "square" else None,
         ETA=1e-3,
-        DELTA=5.0,
+        DELTA=DOT_SHIFT,
         leads={
             "L": LeadParams(
-                Gamma0=0.5,
-                Delta=10.0,
-                beta=10,
-                mu=0.0,
+                Gamma0=GAMMA_L,
+                Delta=BIAS,
+                beta=BETA_L,
+                mu=MU_L,
             ),
             "R": LeadParams(
-                Gamma0=0.5,
+                Gamma0=GAMMA_R,
                 Delta=0.0,
-                beta=10,
-                mu=0.0,
+                beta=BETA_R,
+                mu=MU_R,
             ),
         },
         W=W,
         g_q=g_q_gamma,
-        w_q=0.2,
-        e_0=0.0,
-        beta_ph=20.0,
-        mu_ph=0.0,
+        w_q=OMEGA_PH,
+        e_0=EPSILON_0,
+        beta_ph=BETA_PH,
+        mu_ph=MU_PH,
         N0=N0_DEFAULT,
-        beta_fd=10,
-        mu_fd=0.0,
+        beta_fd=BETA_FD,
+        mu_fd=MU_FD,
         e_min=-20.0,
         e_max=20.0,
         omega_min=-100.0,
@@ -368,6 +400,10 @@ def _compute_current_with_diagnostics(
     diagnostics["g_q_input_meV"] = float(g_q)
     diagnostics["g_q_resolved_Gamma"] = float(resolved_g_q_gamma)
     diagnostics["g_q_resolved_eV"] = float(g_q) * 1e-3
+    diagnostics["bias_over_Gamma"] = float(BIAS)
+    diagnostics["dot_shift_over_Gamma"] = float(DOT_SHIFT)
+    diagnostics["epsilon0_over_Gamma"] = float(EPSILON_0)
+    diagnostics["omega_ph_over_Gamma"] = float(OMEGA_PH)
     diagnostics["pulse_protocol"] = PULSE_PROTOCOL
     diagnostics["pulse_duration"] = (
         SQUARE_DURATION if PULSE_PROTOCOL == "square" else None
