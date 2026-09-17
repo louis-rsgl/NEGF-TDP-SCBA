@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.integrate import quad_vec
+from scipy.integrate import quad_vec, simpson
 
 from backend.distribution import expc, fermi_dirac
 from backend.minimal_poles import (
@@ -36,6 +36,32 @@ class TransientResult:
 def linewidth(sys: System, lead: Lead, energy):
     energy = np.asarray(energy, dtype=np.complex128)
     return sys.Gamma0(lead) * sys.W**2 / (energy**2 + sys.W**2)
+
+
+def _integrate_energy(sys: System, values, grid, axis: int = -1):
+    """Integrate regular transient-energy factors with the configured rule.
+
+    Singular Cauchy terms are handled independently by
+    integrate_cauchy_linear() and deliberately do not pass through this
+    helper.
+    """
+    rule = getattr(sys, "current_quadrature", "trapezoid")
+
+    if rule == "trapezoid":
+        return np.trapezoid(values, grid, axis=axis)
+
+    if rule == "simpson":
+        grid = np.asarray(grid, dtype=float)
+        if grid.ndim != 1:
+            raise ValueError("Current quadrature grid must be one-dimensional.")
+        if len(grid) < 3:
+            return np.trapezoid(values, grid, axis=axis)
+        return simpson(values, x=grid, axis=axis)
+
+    raise ValueError(
+        "current_quadrature must be 'trapezoid' or 'simpson'; "
+        f"got {rule!r}."
+    )
 
 
 def integrate_cauchy_linear(poles, grid, values):
@@ -626,7 +652,7 @@ def _psi_lead_down_batch(sys, cache, outer, inner, time, alpha, A_values):
             * linewidth(sys, beta, inner)[None, :]
             * np.conjugate(b_beta)
         )
-        result += np.trapezoid(smooth_integrand, inner, axis=1) / (2.0 * np.pi)
+        result += _integrate_energy(sys, smooth_integrand, inner, axis=1) / (2.0 * np.pi)
         singular_values = (
             np.exp(-1j * inner * time)
             * fermi_dirac(inner, sys.beta_fc(beta), sys.mu_fc(beta))
@@ -666,7 +692,7 @@ def _psi_ep_down_batch(sys, cache, frozen, outer, inner, time, alpha, C_values):
             * common_inner[None, :]
             * np.conjugate(d_value)
         )
-        result += np.trapezoid(smooth_integrand, inner, axis=1) / (2.0 * np.pi)
+        result += _integrate_energy(sys, smooth_integrand, inner, axis=1) / (2.0 * np.pi)
         singular_values = (
             np.exp(-1j * inner * time) * common_inner
             * np.conjugate(Gbar_R_mpm(sys, cache, inner + omega))
@@ -700,7 +726,7 @@ def _psi_lead_up_batch(sys, cache, outer, inner, time, alpha, A_values):
             * linewidth(sys, beta, inner)[None, :]
             * np.conjugate(b_beta)
         )
-        result += np.trapezoid(smooth_integrand, inner, axis=1) / (2.0 * np.pi)
+        result += _integrate_energy(sys, smooth_integrand, inner, axis=1) / (2.0 * np.pi)
         singular_values = (
             np.exp(-1j * inner * time)
             * fermi_dirac(inner, sys.beta_fc(beta), sys.mu_fc(beta))
@@ -743,7 +769,7 @@ def _psi_ep_up_batch(sys, cache, frozen, outer, inner, time, alpha, C_values):
             * common_inner[None, :]
             * np.conjugate(d_value)
         )
-        result += np.trapezoid(smooth_integrand, inner, axis=1) / (2.0 * np.pi)
+        result += _integrate_energy(sys, smooth_integrand, inner, axis=1) / (2.0 * np.pi)
         singular_values = (
             np.exp(-1j * inner * time)
             * common_inner
@@ -786,7 +812,7 @@ def _psi_lead_square_batch(
             1j * np.exp(1j * (outer[:, None] - inner[None, :]) * time)
             * common[None, :] * phase * history
         )
-        result += np.trapezoid(smooth, inner, axis=1) / (2.0 * np.pi)
+        result += _integrate_energy(sys, smooth, inner, axis=1) / (2.0 * np.pi)
         singular_values = (
             np.exp(-1j * inner * time) * common
             * np.conjugate(Gfr_R_mpm(sys, cache, inner))
@@ -830,7 +856,7 @@ def _psi_ep_square_batch(
             * np.exp(1j * (outer[:, None] - inner[None, :] - omega) * time)
             * common[None, :] * phase * history
         )
-        result += np.trapezoid(smooth, inner, axis=1) / (2.0 * np.pi)
+        result += _integrate_energy(sys, smooth, inner, axis=1) / (2.0 * np.pi)
         singular_values = (
             np.exp(-1j * inner * time) * common
             * np.conjugate(Gfr_R_mpm(sys, cache, inner + omega))
@@ -852,14 +878,14 @@ def _occupation(sys, frozen, inner, A_values, C_values):
             * linewidth(sys, beta, inner)
             * np.abs(A_values[beta]) ** 2
         )
-    g_less_equal = np.trapezoid(g_lead, inner) / (2.0 * np.pi)
+    g_less_equal = _integrate_energy(sys, g_lead, inner) / (2.0 * np.pi)
     if sys.g_q != 0.0:
         middle = _frozen_kernel_less(frozen, inner)
         g_ep_integrand = sys.g_q**2 * middle * (
             (frozen.N0 + 1.0) * np.abs(C_values[-sys.w_q]) ** 2
             + frozen.N0 * np.abs(C_values[+sys.w_q]) ** 2
         )
-        g_less_equal += np.trapezoid(g_ep_integrand, inner) / (2.0 * np.pi)
+        g_less_equal += _integrate_energy(sys, g_ep_integrand, inner) / (2.0 * np.pi)
     occupation = -1j * g_less_equal
     noise = abs(occupation.imag)
     if noise > 1e-7 * max(1.0, abs(occupation.real)):
@@ -948,6 +974,7 @@ def _transient_diagnostics(
         "current_energy_min": float(energies[0]),
         "current_energy_max": float(energies[-1]),
         "current_energy_points": int(len(energies)),
+        "current_quadrature": getattr(sys, "current_quadrature", "trapezoid"),
         "max_continuity_residual": float(np.max(np.abs(continuity))),
     }
     if extra:
@@ -1054,7 +1081,7 @@ def current_all_down(
                 current_integrand[start:stop] = np.real(
                     linewidth(sys, alpha, outer)
                 ) * np.imag(psi + f_alpha * A_values[alpha][start:stop])
-            currents[alpha][time_index] = -2.0 * np.trapezoid(
+            currents[alpha][time_index] = -2.0 * _integrate_energy(sys, 
                 current_integrand, energies
             ) / (2.0 * np.pi)
 
@@ -1128,7 +1155,7 @@ def current_all_up(
                 current_integrand[start:stop] = np.real(
                     linewidth(sys, alpha, outer)
                 ) * np.imag(psi + f_alpha * A_values[alpha][start:stop])
-            currents[alpha][time_index] = -2.0 * np.trapezoid(
+            currents[alpha][time_index] = -2.0 * _integrate_energy(sys, 
                 current_integrand, energies
             ) / (2.0 * np.pi)
 
@@ -1201,6 +1228,14 @@ def current_all_square(
     # the post-turnoff observation time.  Cache them once for the entire run.
     stored_B: dict[tuple[str, str, int], np.ndarray] = {}
     stored_D: dict[tuple[str, float, int], np.ndarray] = {}
+
+    # In the exact electronic limit g_q = 0 the C/D hierarchy does not
+    # contribute to either the occupation or the current.  Avoid constructing
+    # the O(N_E^2) D histories in that limit.  Besides saving substantial
+    # memory, this makes dense current-energy convergence studies practical
+    # without changing the electronic A/B calculation.
+    electronic_only = bool(sys.g_q == 0.0)
+
     if post_count:
         for start in range(0, n_energy, batch_size):
             stop = min(start + batch_size, n_energy)
@@ -1213,13 +1248,15 @@ def current_all_square(
                     stored_B[(alpha, beta, start)] = np.asarray(value).reshape(
                         len(outer), n_energy
                     )
-                for omega in sorted({-float(sys.w_q), float(sys.w_q)}):
-                    value = D_up(
-                        sys, omega, energies, outer, duration, alpha, cache
-                    )
-                    stored_D[(alpha, omega, start)] = np.asarray(value).reshape(
-                        len(outer), n_energy
-                    )
+
+                if not electronic_only:
+                    for omega in sorted({-float(sys.w_q), float(sys.w_q)}):
+                        value = D_up(
+                            sys, omega, energies, outer, duration, alpha, cache
+                        )
+                        stored_D[(alpha, omega, start)] = np.asarray(value).reshape(
+                            len(outer), n_energy
+                        )
 
     for time_index, time in enumerate(times):
         before_turnoff = time <= duration
@@ -1228,7 +1265,7 @@ def current_all_square(
                 lead: np.asarray(A_up(sys, energies, time, lead, cache)).reshape(-1)
                 for lead in sys.lead_names
             }
-            C_values = {
+            C_values = {} if electronic_only else {
                 omega: np.asarray(C_up(sys, omega, energies, time, cache)).reshape(-1)
                 for omega in sorted({-float(sys.w_q), float(sys.w_q)})
             }
@@ -1239,7 +1276,7 @@ def current_all_square(
                 ).reshape(-1)
                 for lead in sys.lead_names
             }
-            C_values = {
+            C_values = {} if electronic_only else {
                 omega: np.asarray(
                     C_square(sys, omega, energies, time, cache, square_cache, duration)
                 ).reshape(-1)
@@ -1266,25 +1303,27 @@ def current_all_square(
                         beta: stored_B[(alpha, beta, start)]
                         for beta in sys.lead_names
                     }
-                    phonon_histories = {
-                        omega: stored_D[(alpha, omega, start)]
-                        for omega in sorted({-float(sys.w_q), float(sys.w_q)})
-                    }
                     psi = _psi_lead_square_batch(
                         sys, cache, square_cache, outer, energies, time,
                         alpha, A_values, lead_histories,
                     )
-                    psi += _psi_ep_square_batch(
-                        sys, cache, frozen, square_cache, outer, energies, time,
-                        alpha, C_values, phonon_histories,
-                    )
+
+                    if not electronic_only:
+                        phonon_histories = {
+                            omega: stored_D[(alpha, omega, start)]
+                            for omega in sorted({-float(sys.w_q), float(sys.w_q)})
+                        }
+                        psi += _psi_ep_square_batch(
+                            sys, cache, frozen, square_cache, outer, energies, time,
+                            alpha, C_values, phonon_histories,
+                        )
                 f_alpha = fermi_dirac(
                     outer, sys.beta_fc(alpha), sys.mu_fc(alpha)
                 )
                 current_integrand[start:stop] = np.real(
                     linewidth(sys, alpha, outer)
                 ) * np.imag(psi + f_alpha * A_values[alpha][start:stop])
-            currents[alpha][time_index] = -2.0 * np.trapezoid(
+            currents[alpha][time_index] = -2.0 * _integrate_energy(sys, 
                 current_integrand, energies
             ) / (2.0 * np.pi)
         if sys.verbose:

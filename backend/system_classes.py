@@ -77,6 +77,7 @@ class System:
     pole_causality_tol: float = 1e-10
     pole_merge_tol: float = 1e-7
     current_energy_batch: int = 32
+    current_quadrature: str = "trapezoid"
     square_residue_n_theta: int = 64
     square_residue_abs_tol: float = 1e-8
     square_residue_rel_tol: float = 1e-6

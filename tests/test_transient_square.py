@@ -148,3 +148,29 @@ def test_small_square_current_dispatch_and_diagnostics():
     assert np.all(np.isfinite(result.occupation))
     with pytest.raises(RuntimeError, match="does not match"):
         current_all(sys, 0.01, 3, omega_int_n_omega=11, protocol="upward")
+
+
+def test_square_simpson_current_quadrature():
+    sys = make_square_system(
+        pulse_duration=0.005,
+        g_q=0.0,
+        n_w_scba=31,
+        current_energy_batch=7,
+        current_quadrature="simpson",
+        e_min=-4.0,
+        e_max=4.0,
+        omega_min=-8.0,
+        omega_max=8.0,
+    )
+    result = current_all(
+        sys,
+        t_max=0.01,
+        n_t=3,
+        omega_int_n_omega=21,
+    )
+    assert result.diagnostics["current_quadrature"] == "simpson"
+    assert all(
+        np.all(np.isfinite(values))
+        for values in result.currents.values()
+    )
+    assert np.all(np.isfinite(result.occupation))
